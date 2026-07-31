@@ -38,6 +38,7 @@ import {
   renderJobDocument,
 } from "./format.js";
 import { EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, WORK_MODELS } from "./filters.js";
+import { REQUIRED_SCOPE, toToolError } from "./errors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Configuration
@@ -45,7 +46,6 @@ import { EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, WORK_MODELS } from "./filters.js";
 
 const MCP_RESOURCE_URL = process.env.MCP_RESOURCE_URL ?? "https://jobs-mcp.jobo.world";
 const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterprise.jobo.world").replace(/\/$/, "");
-const REQUIRED_SCOPE = "jobs:read";
 const PORT = Number(process.env.PORT ?? 3002);
 
 const SERVER_NAME = "jobo-job-search";
@@ -123,40 +123,6 @@ function requireBearer(req: express.Request, res: express.Response, next: expres
 
   req.auth = { token, clientId: "", scopes: [] };
   next();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Tool errors
-// ─────────────────────────────────────────────────────────────────────────────
-
-function toToolError(err: unknown): { content: { type: "text"; text: string }[]; isError: true } {
-  let text: string;
-  if (err instanceof UpstreamError) {
-    if (err.status === 401) {
-      text =
-        "Authentication failed: the Jobo API rejected the access token (it may have expired). " +
-        "Re-authenticate and retry.";
-    } else if (err.status === 403) {
-      text = `Authorization failed: the token is missing the required '${REQUIRED_SCOPE}' scope.`;
-    } else if (err.status === 404) {
-      text = "No job exists with that id. Job ids come from `search` or `search_jobs`; listings are removed once they close.";
-    } else if (err.status === 429) {
-      text =
-        err.retryAfterSeconds != null
-          ? `Rate limited — retry in ${err.retryAfterSeconds}s.`
-          : "Rate limited by the Jobo API. Wait a moment before retrying.";
-    } else {
-      text = err.message || `Jobo API error ${err.status}.`;
-      if (err.status === 400) {
-        text +=
-          "\n\nHint: call `list_filters` for the exact accepted values for work model, employment type, " +
-          "experience level and source. Also note salary filters only match jobs whose employer disclosed a salary.";
-      }
-    }
-  } else {
-    text = `Could not reach the Jobo API: ${(err as Error).message}`;
-  }
-  return { content: [{ type: "text", text }], isError: true };
 }
 
 function bearerFrom(extra: { authInfo?: AuthInfo }): string {
