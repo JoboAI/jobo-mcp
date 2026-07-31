@@ -1,11 +1,11 @@
 {
-  "name": "jobo-jobs-mcp",
+  "name": "jobo-job-search-mcp",
   "version": "1.0.0",
-  "description": "Remote job-search MCP server for the Jobo jobs index. Exposes the canonical search/fetch pair so it works as a ChatGPT Deep Research connector, plus rich filtered search. OAuth 2.1 resource server with Streamable HTTP transport.",
+  "description": "Job search MCP server \u2014 search live job listings and career site jobs from 100+ ATS platforms via Jobo.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "jobo-jobs-mcp": "dist/index.js"
+    "jobo-job-search-mcp": "dist/index.js"
   },
   "files": [
     "dist",
@@ -21,9 +21,12 @@
   },
   "keywords": [
     "mcp",
-    "model-context-protocol",
+    "model context protocol",
+    "job search",
     "jobs",
-    "job-search",
+    "job board",
+    "job listings",
+    "career site",
     "jobo"
   ],
   "author": "Jobo <support@jobo.world>",

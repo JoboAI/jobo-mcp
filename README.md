@@ -15,7 +15,7 @@ Full client setup (Claude, ChatGPT, Cursor, Codex CLI) and the tool reference:
 The hosted deployment is `https://jobs-mcp.jobo.world`. To run your own copy instead:
 
 ```bash
-npx jobo-jobs-mcp
+npx jobo-job-search-mcp
 ```
 
 Starts the Streamable HTTP server on `$PORT` (default `3002`); point your client at

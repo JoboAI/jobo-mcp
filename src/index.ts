@@ -9,12 +9,12 @@
  * as a ChatGPT Deep Research connector.
  *
  * The shebang plus the package.json `bin` entry make this npx-runnable. This is
- * a Streamable HTTP server, not stdio — `npx jobo-jobs-mcp` boots the gateway
+ * a Streamable HTTP server, not stdio — `npx jobo-job-search-mcp` boots the gateway
  * on $PORT (default 3002) and MCP clients then connect to http://host:3002/mcp.
  * README snippet, kept here because docs are owned elsewhere:
  *
- *   npx jobo-jobs-mcp                       # starts the HTTP server on :3002
- *   PORT=8080 npx jobo-jobs-mcp             # ...or any port you like
+ *   npx jobo-job-search-mcp                       # starts the HTTP server on :3002
+ *   PORT=8080 npx jobo-job-search-mcp             # ...or any port you like
  */
 
 import express from "express";
@@ -48,7 +48,7 @@ const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterpris
 const REQUIRED_SCOPE = "jobs:read";
 const PORT = Number(process.env.PORT ?? 3002);
 
-const SERVER_NAME = "jobo-jobs";
+const SERVER_NAME = "jobo-job-search";
 const SERVER_VERSION = "1.0.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
