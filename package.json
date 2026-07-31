@@ -1,0 +1,50 @@
+{
+  "name": "jobo-jobs-mcp",
+  "version": "1.0.0",
+  "description": "Remote job-search MCP server for the Jobo jobs index. Exposes the canonical search/fetch pair so it works as a ChatGPT Deep Research connector, plus rich filtered search. OAuth 2.1 resource server with Streamable HTTP transport.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "jobo-jobs-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test dist/*.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "jobs",
+    "job-search",
+    "jobo"
+  ],
+  "author": "Jobo <support@jobo.world>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JoboAI/jobo-mcp.git"
+  },
+  "homepage": "https://jobo.world/mcp",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "express": "^4.18.2",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
