@@ -1,0 +1,51 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "world.jobo/job-search",
+  "title": "Jobo Job Search",
+  "description": "Search a live index of millions of open jobs from employer career sites and 100+ ATS platforms.",
+  "repository": {
+    "url": "https://github.com/JoboAI/jobo-mcp",
+    "source": "github"
+  },
+  "version": "1.1.0",
+  "websiteUrl": "https://jobo.world/mcp",
+  "icons": [
+    {
+      "src": "https://jobo.world/apple-touch-icon.png",
+      "mimeType": "image/png",
+      "sizes": ["180x180"]
+    },
+    {
+      "src": "https://jobo.world/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://jobs-mcp.jobo.world/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "jobo-job-search-mcp",
+      "version": "1.1.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:3002/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "PORT",
+          "description": "Port for the local HTTP server (default 3002).",
+          "isRequired": false,
+          "format": "number"
+        }
+      ]
+    }
+  ]
+}

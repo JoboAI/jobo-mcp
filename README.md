@@ -6,7 +6,9 @@ sites and 100+ applicant tracking systems — to LLM clients.
 Full client setup (Claude, ChatGPT, Cursor, Codex CLI) and the tool reference:
 [jobo.world/docs/connectors/mcp](https://jobo.world/docs/connectors/mcp).
 
-- **Transport:** Streamable HTTP, single `/mcp` endpoint (MCP spec 2025-06-18), stateless.
+- **Transport:** Streamable HTTP, single `/mcp` endpoint, stateless. Serves MCP spec **2026-07-28**
+  natively and every 2025-era client through the built-in legacy fallback (SDK v2
+  `createMcpHandler`, one factory for both eras).
 - **Auth:** OAuth 2.1. This is a Resource Server; the Authorization Server is the Jobo API. Clients log in
   with their Jobo account — no API key copy-paste. Required scope: `jobs:read`.
 
@@ -109,7 +111,11 @@ the gateway forwards it and the stub answers. A real token is only needed agains
 
 ## Registry listing
 
-Publish once to the official MCP Registry with a DNS-TXT-verified `world.jobo/*` namespace; there is no
-review queue and aggregators poll it roughly hourly. Note the official registry has **no per-server web
-page** by design — it is a metadata API for aggregators. The downstream surfaces differ: PulseMCP emits a
-dofollow link, Glama and mcp.so are `nofollow`.
+Published to the official MCP Registry as **`world.jobo/job-search`** (the `mcpName` in `package.json`;
+`server.json` in this directory is the registry manifest). Publishing is automated: the `mcp-v*` tag
+workflow publishes npm first, then pushes `server.json` to the registry under the DNS-TXT-verified
+`world.jobo/*` namespace — see `../RELEASING.md`. There is no review queue and aggregators poll roughly
+hourly. Note the official registry has **no per-server web page** by design — it is a metadata API for
+aggregators. The downstream surfaces differ: PulseMCP emits a dofollow link, Glama and mcp.so are
+`nofollow`. Manual directory submissions (Claude, ChatGPT, aggregator claims) live in
+`../MCP-DISTRIBUTION.md`.

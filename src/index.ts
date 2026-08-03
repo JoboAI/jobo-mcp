@@ -18,9 +18,9 @@
  */
 
 import express from "express";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import type { AuthInfo } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import {
@@ -49,7 +49,7 @@ const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterpris
 const PORT = Number(process.env.PORT ?? 3002);
 
 const SERVER_NAME = "jobo-job-search";
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "1.1.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auth — gateway model
@@ -125,8 +125,8 @@ function requireBearer(req: express.Request, res: express.Response, next: expres
   next();
 }
 
-function bearerFrom(extra: { authInfo?: AuthInfo }): string {
-  const token = extra.authInfo?.token;
+function bearerFrom(ctx: { http?: { authInfo?: AuthInfo } }): string {
+  const token = ctx.http?.authInfo?.token;
   if (!token) throw new UpstreamError(401, "Missing access token on the request.");
   return token;
 }
@@ -157,7 +157,18 @@ const SERVER_INSTRUCTIONS =
 
 function buildServer(): McpServer {
   const server = new McpServer(
-    { name: SERVER_NAME, version: SERVER_VERSION },
+    {
+      name: SERVER_NAME,
+      title: "Jobo Job Search",
+      version: SERVER_VERSION,
+      websiteUrl: "https://jobo.world/mcp",
+      description:
+        "Search a live index of millions of open jobs collected from employer career sites and 100+ applicant tracking systems.",
+      icons: [
+        { src: "https://jobo.world/favicon.svg", mimeType: "image/svg+xml", sizes: ["any"] },
+        { src: "https://jobo.world/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] },
+      ],
+    },
     { instructions: SERVER_INSTRUCTIONS },
   );
 
@@ -173,18 +184,18 @@ function buildServer(): McpServer {
         "Search live job listings by free text and return matching jobs with their ids, titles and URLs. " +
         "Pass the id of any result to `fetch` to read the full listing. For structured filtering " +
         "(location, salary, seniority, remote-only, specific ATS) prefer `search_jobs`.",
-      inputSchema: {
-        query: z.string().describe("What to search for, e.g. 'senior rust engineer remote europe'."),
-      },
-      outputSchema: {
-        results: z.array(
-          z.object({
-            id: z.string(),
-            title: z.string(),
-            url: z.string(),
-          }),
-        ),
-      },
+      inputSchema: z.object({
+              query: z.string().describe("What to search for, e.g. 'senior rust engineer remote europe'."),
+            }),
+      outputSchema: z.object({
+              results: z.array(
+                z.object({
+                  id: z.string(),
+                  title: z.string(),
+                  url: z.string(),
+                }),
+              ),
+            }),
       annotations: {
         title: "Search jobs",
         readOnlyHint: true,
@@ -197,12 +208,12 @@ function buildServer(): McpServer {
         "openai/toolInvocation/invoked": "Jobs found",
       },
     },
-    async ({ query: q }, extra) => {
+    async ({ query: q }, ctx) => {
       try {
         const res = await callApi<UpstreamSearchResponse>(
           "GET",
           `/api/mcp/jobs/search${query({ q, page_size: 20 })}`,
-          bearerFrom(extra),
+          bearerFrom(ctx),
         );
         const payload = toSearchPayload(res);
         return {
@@ -223,16 +234,16 @@ function buildServer(): McpServer {
       description:
         "Retrieve one job listing in full by id — responsibilities, qualifications, benefits, compensation, " +
         "locations and company context, as readable text. Ids come from `search` or `search_jobs`.",
-      inputSchema: {
-        id: z.string().describe("The job id returned by `search` or `search_jobs`."),
-      },
-      outputSchema: {
-        id: z.string(),
-        title: z.string(),
-        text: z.string(),
-        url: z.string(),
-        metadata: z.record(z.string()),
-      },
+      inputSchema: z.object({
+              id: z.string().describe("The job id returned by `search` or `search_jobs`."),
+            }),
+      outputSchema: z.object({
+              id: z.string(),
+              title: z.string(),
+              text: z.string(),
+              url: z.string(),
+              metadata: z.record(z.string(), z.string()),
+            }),
       annotations: {
         title: "Fetch job",
         readOnlyHint: true,
@@ -245,12 +256,12 @@ function buildServer(): McpServer {
         "openai/toolInvocation/invoked": "Listing read",
       },
     },
-    async ({ id }, extra) => {
+    async ({ id }, ctx) => {
       try {
         const res = await callApi<UpstreamJobDetails>(
           "GET",
           `/api/mcp/jobs/${encodeURIComponent(id)}`,
-          bearerFrom(extra),
+          bearerFrom(ctx),
         );
         const payload = toFetchPayload(res);
         return {
@@ -282,32 +293,32 @@ function buildServer(): McpServer {
         "Salary filters only match jobs whose employer published a range, which is a minority of listings — " +
         "applying one narrows results far more than it looks. Set `include_facets` to see how the matches " +
         "break down before narrowing further.",
-      inputSchema: {
-        q: z.string().optional().describe("Free-text query matched against title and description."),
-        location: z.string().optional().describe("Free-form location, e.g. 'Berlin, Germany' or 'United States'."),
-        work_model: z
-          .string()
-          .optional()
-          .describe(`Work model. One or more of: ${WORK_MODELS.join(", ")} (comma-separated).`),
-        employment_type: z
-          .string()
-          .optional()
-          .describe(`Employment type. One or more of: ${EMPLOYMENT_TYPES.join(", ")} (comma-separated).`),
-        experience_level: z
-          .string()
-          .optional()
-          .describe(`Experience level. One or more of: ${EXPERIENCE_LEVELS.join(", ")} (comma-separated).`),
-        source: z.string().optional().describe("ATS source ids, comma-separated."),
-        skills: z.string().optional().describe("Required skills, comma-separated."),
-        industries: z.string().optional().describe("Company industries, comma-separated."),
-        min_salary_usd: z.number().int().optional().describe("Only jobs with a published range at or above this."),
-        max_salary_usd: z.number().int().optional().describe("Only jobs with a published range at or below this."),
-        posted_after: z.string().optional().describe("ISO-8601 timestamp; only jobs posted on or after it."),
-        posted_before: z.string().optional().describe("ISO-8601 timestamp; only jobs posted on or before it."),
-        include_facets: z.boolean().optional().describe("Return counts per filter value alongside the results."),
-        page: z.number().int().min(1).optional().describe("1-based page number. Defaults to 1."),
-        page_size: z.number().int().min(1).max(50).optional().describe("Results per page, max 50. Defaults to 20."),
-      },
+      inputSchema: z.object({
+              q: z.string().optional().describe("Free-text query matched against title and description."),
+              location: z.string().optional().describe("Free-form location, e.g. 'Berlin, Germany' or 'United States'."),
+              work_model: z
+                .string()
+                .optional()
+                .describe(`Work model. One or more of: ${WORK_MODELS.join(", ")} (comma-separated).`),
+              employment_type: z
+                .string()
+                .optional()
+                .describe(`Employment type. One or more of: ${EMPLOYMENT_TYPES.join(", ")} (comma-separated).`),
+              experience_level: z
+                .string()
+                .optional()
+                .describe(`Experience level. One or more of: ${EXPERIENCE_LEVELS.join(", ")} (comma-separated).`),
+              source: z.string().optional().describe("ATS source ids, comma-separated."),
+              skills: z.string().optional().describe("Required skills, comma-separated."),
+              industries: z.string().optional().describe("Company industries, comma-separated."),
+              min_salary_usd: z.number().int().optional().describe("Only jobs with a published range at or above this."),
+              max_salary_usd: z.number().int().optional().describe("Only jobs with a published range at or below this."),
+              posted_after: z.string().optional().describe("ISO-8601 timestamp; only jobs posted on or after it."),
+              posted_before: z.string().optional().describe("ISO-8601 timestamp; only jobs posted on or before it."),
+              include_facets: z.boolean().optional().describe("Return counts per filter value alongside the results."),
+              page: z.number().int().min(1).optional().describe("1-based page number. Defaults to 1."),
+              page_size: z.number().int().min(1).max(50).optional().describe("Results per page, max 50. Defaults to 20."),
+            }),
       annotations: {
         title: "Search jobs with filters",
         readOnlyHint: true,
@@ -320,12 +331,12 @@ function buildServer(): McpServer {
         "openai/toolInvocation/invoked": "Jobs found",
       },
     },
-    async (args, extra) => {
+    async (args, ctx) => {
       try {
         const res = await callApi<UpstreamSearchResponse>(
           "GET",
           `/api/mcp/jobs/search${query({ ...args, page_size: args.page_size ?? 20 })}`,
-          bearerFrom(extra),
+          bearerFrom(ctx),
         );
 
         let text = renderSearchResults(res);
@@ -358,13 +369,13 @@ function buildServer(): McpServer {
         "Read one job listing in full by id: responsibilities, required and preferred qualifications, " +
         "benefits, compensation, every location, and company context. Same data as `fetch`, for clients " +
         "that are not using the Deep Research contract.",
-      inputSchema: {
-        id: z.string().describe("The job id returned by a search tool."),
-        include_description: z
-          .boolean()
-          .optional()
-          .describe("Append the raw employer description. Usually unnecessary — the extracted fields cover it and the raw text is long and boilerplate-heavy."),
-      },
+      inputSchema: z.object({
+              id: z.string().describe("The job id returned by a search tool."),
+              include_description: z
+                .boolean()
+                .optional()
+                .describe("Append the raw employer description. Usually unnecessary — the extracted fields cover it and the raw text is long and boilerplate-heavy."),
+            }),
       annotations: {
         title: "Get job details",
         readOnlyHint: true,
@@ -377,12 +388,12 @@ function buildServer(): McpServer {
         "openai/toolInvocation/invoked": "Listing read",
       },
     },
-    async ({ id, include_description }, extra) => {
+    async ({ id, include_description }, ctx) => {
       try {
         const res = await callApi<UpstreamJobDetails>(
           "GET",
           `/api/mcp/jobs/${encodeURIComponent(id)}`,
-          bearerFrom(extra),
+          bearerFrom(ctx),
         );
 
         let text = renderJobDocument(res);
@@ -409,7 +420,7 @@ function buildServer(): McpServer {
         "Return the accepted values for every `search_jobs` filter, with how many jobs currently carry each " +
         "one. Call this when you are unsure what a filter accepts, or to size the index before narrowing a " +
         "search. Values are canonical — use them verbatim.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: {
         title: "List filters",
         readOnlyHint: true,
@@ -422,9 +433,9 @@ function buildServer(): McpServer {
         "openai/toolInvocation/invoked": "Filters ready",
       },
     },
-    async (_args, extra) => {
+    async (_args, ctx) => {
       try {
-        const res = await callApi<UpstreamFiltersResponse>("GET", "/api/mcp/filters", bearerFrom(extra));
+        const res = await callApi<UpstreamFiltersResponse>("GET", "/api/mcp/filters", bearerFrom(ctx));
 
         const sections: string[] = [`${res.total_jobs.toLocaleString("en-US")} active jobs indexed.`];
         sections.push(`**work_model:** ${res.enums.work_models.join(", ")}`);
@@ -457,54 +468,42 @@ function buildServer(): McpServer {
 export const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+function resourceMetadata(_req: express.Request, res: express.Response): void {
   res.json({
     resource: MCP_RESOURCE_URL,
     authorization_servers: [AUTH_SERVER_URL],
     bearer_methods_supported: ["header"],
     scopes_supported: [REQUIRED_SCOPE],
   });
-});
+}
+// Both RFC 9728 well-known forms: the root form and the path-suffixed form
+// (`…/oauth-protected-resource/mcp`) that clients derive from the /mcp endpoint.
+app.get("/.well-known/oauth-protected-resource", resourceMetadata);
+app.get("/.well-known/oauth-protected-resource/mcp", resourceMetadata);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", server: `${SERVER_NAME}-mcp`, version: SERVER_VERSION });
 });
 
-// Stateless, for the same reasons as the analytics server: a per-session
-// transport Map lives in process memory, so every restart or redeploy stranded
-// clients with "No active session", and it pinned the deployment to one replica.
-// The transport object holds live streams, so Redis cannot back it either.
-app.post("/mcp", requireBearer, async (req, res) => {
-  const server = buildServer();
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on("close", () => {
-    void transport.close();
-    void server.close();
-  });
-  try {
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (err) {
-    console.error("MCP request handling failed:", err);
-    if (!res.headersSent) {
-      res.status(500).json({
-        jsonrpc: "2.0",
-        error: { code: -32603, message: "Internal server error" },
-        id: null,
-      });
-    }
-  }
+// One factory, one endpoint, both protocol eras: `createMcpHandler` serves the
+// 2026-07-28 revision (natively stateless — no handshake, no sessions) and,
+// via its default `legacy: 'stateless'` fallback, answers 2025-era clients
+// through exactly the per-request idiom this server always used. That idiom is
+// deliberate: a per-session transport Map lives in process memory, so every
+// restart or redeploy stranded clients with "No active session", and it pinned
+// the deployment to one replica. The transport object holds live streams, so
+// Redis cannot back it either. Method semantics (legacy GET/DELETE → 405) are
+// owned by the handler. `toNodeHandler` forwards `req.auth` as the pass-through
+// authInfo that tool handlers read via `ctx.http.authInfo`.
+const mcpHandler = createMcpHandler(buildServer, {
+  onerror: (err) => console.error("MCP request handling failed:", err),
 });
-
-function methodNotAllowed(_req: express.Request, res: express.Response): void {
-  res.status(405).json({
-    jsonrpc: "2.0",
-    error: { code: -32000, message: "Method not allowed: this MCP server is stateless." },
-    id: null,
-  });
-}
-app.get("/mcp", methodNotAllowed);
-app.delete("/mcp", methodNotAllowed);
+const handleMcp = toNodeHandler(mcpHandler, {
+  onerror: (err) => console.error("MCP request handling failed:", err),
+});
+app.all("/mcp", requireBearer, (req, res) => {
+  void handleMcp(req, res, req.body);
+});
 
 // Skipped under test, which imports `app` directly.
 if (process.env.NODE_ENV !== "test") {
