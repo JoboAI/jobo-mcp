@@ -147,7 +147,7 @@ function query(params: Record<string, string | number | boolean | undefined>): s
 
 const SERVER_INSTRUCTIONS =
   "Jobo job search: a live index of millions of open jobs collected directly from employer career sites " +
-  "and 100+ applicant tracking systems. Use `search` for a quick lookup by free text and `fetch` to read " +
+  "and 150+ applicant tracking systems. Use `search` for a quick lookup by free text and `fetch` to read " +
   "one job in full. For anything with structure — a location, salary floor, seniority, work model, or a " +
   "specific ATS — use `search_jobs`, which exposes those as real filters instead of hoping a text query " +
   "captures them. Call `list_filters` first if you are unsure what values a filter accepts; the values are " +
@@ -163,7 +163,7 @@ function buildServer(): McpServer {
       version: SERVER_VERSION,
       websiteUrl: "https://jobo.world/mcp",
       description:
-        "Search a live index of millions of open jobs collected from employer career sites and 100+ applicant tracking systems.",
+        "Search a live index of millions of open jobs collected from employer career sites and 150+ applicant tracking systems.",
       icons: [
         { src: "https://jobo.world/favicon.svg", mimeType: "image/svg+xml", sizes: ["any"] },
         { src: "https://jobo.world/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] },

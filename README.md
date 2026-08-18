@@ -1,7 +1,7 @@
 # Jobo Job Search MCP Server
 
 Remote MCP server exposing Jobo's live job index — millions of listings collected from employer career
-sites and 100+ applicant tracking systems — to LLM clients.
+sites and 150+ applicant tracking systems — to LLM clients.
 
 Full client setup (Claude, ChatGPT, Cursor, Codex CLI) and the tool reference:
 [jobo.world/docs/connectors/mcp](https://jobo.world/docs/connectors/mcp).
