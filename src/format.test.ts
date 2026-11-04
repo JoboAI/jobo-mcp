@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   formatCompensation,
   formatLocation,
+  formatOccupation,
   jobTitle,
   renderJobDocument,
   renderSearchResults,
@@ -17,6 +18,12 @@ function summary(overrides: Partial<UpstreamJobSummary> = {}): UpstreamJobSummar
     id: "11111111-2222-3333-4444-555555555555",
     title: "Senior Rust Engineer",
     normalized_title: "software_engineer",
+    occupation: {
+      id: "esco:f2b15a0e-e65a-438a-affb-29b9d50b77d1",
+      name: "Software Engineer",
+      category: "Technology",
+      subcategory: "Software Engineering",
+    },
     summary: "Build low-latency services.",
     listing_url: "https://example.com/jobs/1",
     apply_url: "https://example.com/apply/1",
@@ -125,6 +132,16 @@ describe("formatCompensation", () => {
   });
 });
 
+describe("formatOccupation", () => {
+  it("renders the occupation with its category and subcategory", () => {
+    assert.equal(formatOccupation(summary()), "Software Engineer (Technology › Software Engineering)");
+  });
+
+  it("returns empty when the job is not classified", () => {
+    assert.equal(formatOccupation(summary({ occupation: null })), "");
+  });
+});
+
 describe("search payload — the Deep Research contract", () => {
   it("returns exactly id, title and url per result", () => {
     const payload = toSearchPayload(searchResponse([summary()]));
@@ -172,6 +189,12 @@ describe("fetch payload — the Deep Research contract", () => {
     assert.equal("employment_type" in payload.metadata, false);
   });
 
+  it("carries the occupation in metadata, and leaves it out when the job is not classified", () => {
+    assert.equal(toFetchPayload(details()).metadata.occupation, "Software Engineer (Technology › Software Engineering)");
+    const unclassified = toFetchPayload(details({ summary: summary({ occupation: null }) }));
+    assert.equal("occupation" in unclassified.metadata, false);
+  });
+
   it("produces self-contained text, since Deep Research never opens the URL", () => {
     const text = toFetchPayload(details()).text;
     for (const expected of [
@@ -212,6 +235,15 @@ describe("renderJobDocument", () => {
     assert.equal(renderJobDocument(d).includes("## All locations"), false);
   });
 
+  it("names the occupation", () => {
+    assert.ok(renderJobDocument(details()).includes("**Occupation:** Software Engineer (Technology › Software Engineering)"));
+  });
+
+  it("omits the occupation line when the job is not classified", () => {
+    const d = details({ summary: summary({ occupation: null }) });
+    assert.equal(renderJobDocument(d).includes("Occupation"), false);
+  });
+
   it("leaves the raw HTML description out by default", () => {
     assert.equal(renderJobDocument(details()).includes("Raw employer HTML"), false);
   });
@@ -234,6 +266,12 @@ describe("renderSearchResults", () => {
 
   it("includes each job id so the model can fetch it", () => {
     assert.ok(renderSearchResults(searchResponse([summary()])).includes("id: 11111111-2222-3333-4444-555555555555"));
+  });
+
+  it("names each job's occupation", () => {
+    const text = renderSearchResults(searchResponse([summary()]));
+    assert.ok(text.includes("Occupation: Software Engineer (Technology › Software Engineering)"));
+    assert.equal(renderSearchResults(searchResponse([summary({ occupation: null })])).includes("Occupation"), false);
   });
 
   it("points at the next page when there is one", () => {

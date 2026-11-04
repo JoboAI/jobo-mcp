@@ -113,6 +113,14 @@ export interface UpstreamCompany {
   summary: string | null;
 }
 
+/** The job's occupation in the category › subcategory › occupation taxonomy. */
+export interface UpstreamOccupation {
+  id: string;
+  name: string;
+  category: string;
+  subcategory: string;
+}
+
 export interface UpstreamLocation {
   city: string | null;
   region: string | null;
@@ -137,6 +145,8 @@ export interface UpstreamJobSummary {
   id: string;
   title: string;
   normalized_title: string | null;
+  /** Null when the job is not classified. */
+  occupation: UpstreamOccupation | null;
   summary: string | null;
   listing_url: string;
   apply_url: string;

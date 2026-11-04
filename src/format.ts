@@ -63,6 +63,15 @@ export function formatCompensation(job: UpstreamJobSummary): string {
   return `${prefix} ${currency} ${money(single as number)}${period}`.trim();
 }
 
+/** Render the occupation as "Registered Nurse (Healthcare › Nursing)", or empty when unclassified. */
+export function formatOccupation(job: UpstreamJobSummary): string {
+  const occ = job.occupation;
+  if (!occ?.name) return "";
+
+  const path = [occ.category, occ.subcategory].filter((p): p is string => Boolean(p && p.trim()));
+  return path.length > 0 ? `${occ.name} (${path.join(" › ")})` : occ.name;
+}
+
 /**
  * A job's title line, used as the `title` for both search hits and fetched
  * documents. Company and location are folded in because Deep Research shows the
@@ -97,6 +106,8 @@ export function renderSearchResults(response: UpstreamSearchResponse): string {
     );
     if (facts.length > 0) bits.push(`   ${facts.join(" · ")}`);
 
+    const occupation = formatOccupation(job);
+    if (occupation) bits.push(`   Occupation: ${occupation}`);
     if (job.top_skills.length > 0) bits.push(`   Skills: ${job.top_skills.slice(0, 8).join(", ")}`);
     if (job.summary) bits.push(`   ${job.summary}`);
     bits.push(`   ${job.listing_url || job.apply_url}`);
@@ -131,6 +142,8 @@ export function renderJobDocument(details: UpstreamJobDetails): string {
   sections.push(`# ${job.title}`);
   sections.push(`**Company:** ${job.company.name}`);
   sections.push(`**Location:** ${formatLocation(job)}`);
+  const occupation = formatOccupation(job);
+  if (occupation) sections.push(`**Occupation:** ${occupation}`);
 
   const facts: string[] = [];
   if (job.employment_type) facts.push(`Employment: ${job.employment_type}`);
@@ -202,6 +215,8 @@ export function toFetchPayload(details: UpstreamJobDetails): FetchPayload {
   if (job.employment_type) metadata.employment_type = job.employment_type;
   if (job.experience_level) metadata.experience_level = job.experience_level;
   if (job.workplace_type) metadata.workplace_type = job.workplace_type;
+  const occupation = formatOccupation(job);
+  if (occupation) metadata.occupation = occupation;
   if (job.date_posted) metadata.date_posted = job.date_posted;
   const pay = formatCompensation(job);
   if (pay) metadata.compensation = pay;
