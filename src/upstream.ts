@@ -171,6 +171,8 @@ export interface UpstreamSearchResponse {
   has_more: boolean;
   next_page: number | null;
   facets?: Record<string, Array<{ key: string; count: number }>> | null;
+  /** Plain-prose filter warnings, e.g. a company name that matched nothing. */
+  notes?: string[] | null;
 }
 
 export interface UpstreamQualificationGroup {
@@ -208,4 +210,41 @@ export interface UpstreamFiltersResponse {
     sources: string[];
   };
   facets: Record<string, Array<{ key: string; count: number }>>;
+}
+
+/** One real company from `GET /api/mcp/companies/suggest` (ConnectorCompanySuggestion). */
+export interface UpstreamCompanySuggestion {
+  /** The board with the most live jobs. */
+  id: string;
+  /** Every board id of the company — a `companies` filter should carry all of them. */
+  ids: string[];
+  name: string;
+  domain: string | null;
+  logo_url: string | null;
+  /** HQ country, ISO 3166-1 alpha-2. */
+  country: string | null;
+  /** Live jobs across `ids`; null when the count was unavailable. */
+  job_count: number | null;
+}
+
+export interface UpstreamCompanySuggestionsResponse {
+  suggestions: UpstreamCompanySuggestion[];
+}
+
+/** One value of a filter facet; `name`/`parent` only on the occupation facets. */
+export interface UpstreamFilterOption {
+  key: string;
+  count: number;
+  name?: string | null;
+  parent?: string | null;
+}
+
+export interface UpstreamFilterOptionsResponse {
+  facet: string;
+  options: UpstreamFilterOption[];
+}
+
+/** `GET /api/mcp/occupations?q=` — occupations matching a name, best first. */
+export interface UpstreamOccupationSearchResponse {
+  occupations: UpstreamOccupation[];
 }

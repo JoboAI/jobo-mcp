@@ -6,6 +6,9 @@ import {
   formatLocation,
   formatOccupation,
   jobTitle,
+  renderCompanySuggestions,
+  renderFilterValues,
+  renderOccupationMatches,
   renderJobDocument,
   renderSearchResults,
   toFetchPayload,
@@ -283,5 +286,53 @@ describe("renderSearchResults", () => {
     const text = renderSearchResults(searchResponse([]));
     assert.ok(text.includes("No jobs matched"));
     assert.ok(text.includes("list_filters"));
+  });
+});
+
+describe("search notes and lookups", () => {
+  it("puts upstream notes ahead of the results, empty or not", () => {
+    const note = "Bain matched no company.";
+    assert.ok(renderSearchResults(searchResponse([], { notes: [note] })).startsWith(`Note: ${note}`));
+    assert.ok(renderSearchResults(searchResponse([summary()], { notes: [note] })).startsWith(`Note: ${note}`));
+  });
+
+  it("lists every id of a company as a ready-made companies filter", () => {
+    const text = renderCompanySuggestions("stri", [
+      { id: "b", ids: ["a", "b"], name: "Stripe", domain: "stripe.com", logo_url: null, country: "US", job_count: 1234 },
+      { id: "c", ids: ["c"], name: "Stripes Group", domain: null, logo_url: null, country: null, job_count: null },
+    ]);
+    assert.ok(text.includes('1. Stripe (stripe.com, US) · 1,234 live jobs\n   companies: ["a","b"]'));
+    assert.ok(text.includes('2. Stripes Group\n   companies: ["c"]'));
+  });
+
+  it("explains an empty company lookup", () => {
+    assert.ok(renderCompanySuggestions("zzz", []).includes('No company matched "zzz"'));
+  });
+
+  it("shows occupation ids with their name and parent, and which parameter takes them", () => {
+    const text = renderFilterValues("occupations", "nurs", [
+      { key: "esco:abc", count: 4200, name: "Registered Nurse", parent: "nursing" },
+    ]);
+    assert.ok(text.includes("occupation_ids"));
+    assert.ok(text.includes("- esco:abc — Registered Nurse (in nursing): 4,200 jobs"));
+  });
+
+  it("omits a display name that only repeats the key", () => {
+    const text = renderFilterValues("skills", undefined, [{ key: "python", count: 10, name: "python" }]);
+    assert.ok(text.includes("- python: 10 jobs"));
+    assert.ok(text.includes("`skills`"));
+  });
+
+  it("lists named occupations with their ids and taxonomy path", () => {
+    const text = renderOccupationMatches("nurse", [
+      { id: "esco:rn", name: "Registered Nurse", category: "Healthcare", subcategory: "Nursing" },
+    ]);
+    assert.ok(text.includes("- esco:rn — Registered Nurse (Healthcare › Nursing)"));
+    assert.ok(text.includes("occupation_ids"));
+    assert.ok(renderOccupationMatches("zz", []).includes('No occupation, subcategory or category name contains "zz"'));
+  });
+
+  it("explains an empty facet lookup", () => {
+    assert.ok(renderFilterValues("job_categories", "zz", []).includes('No job_categories value starts with "zz"'));
   });
 });

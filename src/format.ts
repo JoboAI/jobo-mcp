@@ -6,7 +6,15 @@
  * directly testable.
  */
 
-import type { UpstreamJobDetails, UpstreamJobSummary, UpstreamSearchResponse } from "./upstream.js";
+import { FACET_FILTER_PARAM, type FilterValueFacet } from "./filters.js";
+import type {
+  UpstreamCompanySuggestion,
+  UpstreamFilterOption,
+  UpstreamJobDetails,
+  UpstreamJobSummary,
+  UpstreamOccupation,
+  UpstreamSearchResponse,
+} from "./upstream.js";
 
 /**
  * One `search` hit. ChatGPT Deep Research requires exactly this shape: `id`,
@@ -93,8 +101,14 @@ export function toSearchPayload(response: UpstreamSearchResponse): SearchPayload
 
 /** Compact multi-job rendering for the rich `search_jobs` tool. */
 export function renderSearchResults(response: UpstreamSearchResponse): string {
+  // Notes explain an empty or narrowed result (e.g. a company name that matched
+  // nothing) — without them a model reports "no such jobs" instead.
+  const notes = response.notes?.length ? `Note: ${response.notes.join(" ")}\n\n` : "";
   if (response.jobs.length === 0) {
-    return "No jobs matched those filters. Try relaxing one — `list_filters` shows the valid values and how many jobs each has.";
+    return (
+      notes +
+      "No jobs matched those filters. Try relaxing one — `list_filters` shows the valid values and how many jobs each has."
+    );
   }
 
   const lines = response.jobs.map((job, index) => {
@@ -124,7 +138,81 @@ export function renderSearchResults(response: UpstreamSearchResponse): string {
     ? `\n\nMore available — request page ${response.next_page ?? response.page + 1} for the next ${response.page_size}.`
     : "";
 
-  return `${header}\n\n${lines.join("\n\n")}${footer}`;
+  return `${notes}${header}\n\n${lines.join("\n\n")}${footer}`;
+}
+
+/** `find_companies` output: one line per company with every id to filter on. */
+export function renderCompanySuggestions(query: string, companies: UpstreamCompanySuggestion[]): string {
+  if (companies.length === 0) {
+    return (
+      `No company matched "${query}". Lookups match the start of a company name or website domain ` +
+      "(2+ characters) — try a shorter or different spelling, or the company's domain."
+    );
+  }
+
+  const lines = companies.map((company, index) => {
+    const facts = [company.domain, company.country].filter((f): f is string => Boolean(f));
+    const jobs = company.job_count == null ? "" : ` · ${company.job_count.toLocaleString("en-US")} live jobs`;
+    const ids = company.ids.length > 0 ? company.ids : [company.id];
+    return (
+      `${index + 1}. ${company.name}${facts.length > 0 ? ` (${facts.join(", ")})` : ""}${jobs}\n` +
+      `   companies: ${JSON.stringify(ids)}`
+    );
+  });
+
+  return (
+    `${companies.length} compan${companies.length === 1 ? "y" : "ies"} matching "${query}". To filter ` +
+    "`search_jobs` to one, pass its whole `companies` list (one id per careers board).\n\n" +
+    lines.join("\n")
+  );
+}
+
+/** `find_filter_values` output for a named occupation: ids with their place in the taxonomy. */
+export function renderOccupationMatches(query: string, occupations: UpstreamOccupation[]): string {
+  if (occupations.length === 0) {
+    return (
+      `No occupation, subcategory or category name contains "${query}". Try a broader word ('nurse', ` +
+      "'engineer'), or filter with job_categories / job_subcategories instead."
+    );
+  }
+  const lines = occupations.map(
+    (occupation) => `- ${occupation.id} — ${occupation.name} (${occupation.category} › ${occupation.subcategory})`,
+  );
+  return (
+    `${occupations.length} occupation${occupations.length === 1 ? "" : "s"} matching "${query}", best first. ` +
+    "Pass ids as `occupation_ids`; for a whole field, pass the category or subcategory name as " +
+    "`job_categories` / `job_subcategories` instead.\n\n" +
+    lines.join("\n")
+  );
+}
+
+/** `find_filter_values` output: the value to pass, its display name and parent, and live jobs. */
+export function renderFilterValues(
+  facet: FilterValueFacet,
+  query: string | undefined,
+  options: UpstreamFilterOption[],
+): string {
+  const param = FACET_FILTER_PARAM[facet];
+  if (options.length === 0) {
+    return query
+      ? `No ${facet} value starts with "${query}". Try a shorter prefix, or omit q for the most common values.`
+      : `No ${facet} values are available right now.`;
+  }
+
+  const lines = options.map((option) => {
+    const label = option.name && option.name !== option.key ? ` — ${option.name}` : "";
+    const parent = option.parent ? ` (in ${option.parent})` : "";
+    return `- ${option.key}${label}${parent}: ${option.count.toLocaleString("en-US")} jobs`;
+  });
+
+  const hint =
+    facet === "occupations"
+      ? "Pass the id (the value before the dash) as `occupation_ids`."
+      : facet === "job_categories" || facet === "job_subcategories"
+        ? `Pass the value (or its display name) as \`${param}\`.`
+        : `Pass the value as \`${param}\`.`;
+
+  return `${options.length} ${facet} value${options.length === 1 ? "" : "s"}${query ? ` matching "${query}"` : ""}. ${hint}\n\n${lines.join("\n")}`;
 }
 
 /**

@@ -27,17 +27,33 @@ import {
   API_BASE_URL,
   UpstreamError,
   callApi,
+  type UpstreamCompanySuggestionsResponse,
+  type UpstreamFilterOptionsResponse,
   type UpstreamFiltersResponse,
   type UpstreamJobDetails,
+  type UpstreamOccupationSearchResponse,
   type UpstreamSearchResponse,
 } from "./upstream.js";
 import {
+  renderCompanySuggestions,
+  renderFilterValues,
+  renderOccupationMatches,
   renderSearchResults,
   toFetchPayload,
   toSearchPayload,
   renderJobDocument,
 } from "./format.js";
-import { EMPLOYMENT_TYPES, EXPERIENCE_LEVELS, WORK_MODELS } from "./filters.js";
+import {
+  COMPANY_CATEGORIES,
+  EMPLOYMENT_TYPES,
+  EXPERIENCE_LEVELS,
+  FILTER_VALUE_FACETS,
+  LANGUAGES,
+  SEARCH_JOBS_INPUT,
+  SEARCH_SORTS,
+  WORK_MODELS,
+  toMcpSearchBody,
+} from "./filters.js";
 import { REQUIRED_SCOPE, toToolError } from "./errors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +65,7 @@ const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterpris
 const PORT = Number(process.env.PORT ?? 3002);
 
 const SERVER_NAME = "jobo-job-search";
-const SERVER_VERSION = "1.1.0";
+const SERVER_VERSION = "1.2.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auth — gateway model
@@ -148,12 +164,14 @@ function query(params: Record<string, string | number | boolean | undefined>): s
 const SERVER_INSTRUCTIONS =
   "Jobo job search: a live index of millions of open jobs collected directly from employer career sites " +
   "and 200+ applicant tracking systems. Use `search` for a quick lookup by free text and `fetch` to read " +
-  "one job in full. For anything with structure — a location, salary floor, seniority, work model, or a " +
-  "specific ATS — use `search_jobs`, which exposes those as real filters instead of hoping a text query " +
-  "captures them. Call `list_filters` first if you are unsure what values a filter accepts; the values are " +
-  "canonical and lowercase (`remote`, `full-time`, `senior`). Every result carries a listing URL and an " +
-  "apply URL — cite the listing URL. Never invent a job, a company or a salary that did not come back from " +
-  "a tool call.";
+  "one job in full. For anything with structure — a location, company, occupation, salary floor, seniority, " +
+  "work model, language, or a specific ATS — use `search_jobs`, which exposes those as real filters instead " +
+  "of hoping a text query captures them. Resolve names to filter values before searching: `find_companies` " +
+  "turns a company name into its ids (pass every id it returns), and `find_filter_values` lists " +
+  "occupations, job categories and subcategories, skills, industries and ATS sources with live job counts. " +
+  "`list_filters` shows the fixed vocabularies; values are canonical and lowercase (`remote`, `full-time`, " +
+  "`senior`). Every result carries a listing URL and an apply URL — cite the listing URL. Never invent a " +
+  "job, a company or a salary that did not come back from a tool call.";
 
 function buildServer(): McpServer {
   const server = new McpServer(
@@ -275,50 +293,35 @@ function buildServer(): McpServer {
   );
 
   // ── search_jobs (rich) ───────────────────────────────────────────────────
+  // POSTs the typed body: list filters travel as JSON arrays, so a value with a
+  // comma in it (a company name) survives intact.
   server.registerTool(
     "search_jobs",
     {
       title: "Search jobs with filters",
       description:
         "Search live job listings with structured filters. Prefer this over `search` whenever the question " +
-        "has any structure to it — a place, a salary floor, a seniority, remote-only, a particular ATS.\n\n" +
-        "Filter values are canonical and lowercase. Pass several as a comma-separated string " +
-        "(`work_model: 'remote,hybrid'`):\n" +
+        "has any structure to it — a place, a company, an occupation, a salary floor, a seniority, " +
+        "remote-only, a language, a particular ATS.\n\n" +
+        "Fixed vocabularies (canonical, lowercase):\n" +
         `- work_model: ${WORK_MODELS.join(", ")}\n` +
         `- employment_type: ${EMPLOYMENT_TYPES.join(", ")}\n` +
         `- experience_level: ${EXPERIENCE_LEVELS.join(", ")}\n` +
-        "- source: an ATS id such as greenhouse, lever_co, ashby — `list_filters` has the full list\n\n" +
-        "The free-text query always matches descriptions as well as titles; title-only matching " +
-        "(`search_description: false` on the public API) is not supported on this endpoint.\n\n" +
+        `- company_categories: ${COMPANY_CATEGORIES.join(", ")}\n` +
+        `- language: ISO 639-1 codes such as ${LANGUAGES.slice(0, 6).map((l) => l.code).join(", ")}\n` +
+        `- sort: ${SEARCH_SORTS.join(", ")}\n\n` +
+        "Open vocabularies — look the values up first:\n" +
+        "- companies: call `find_companies` and pass every id it returns for the company\n" +
+        "- occupation_ids, job_categories, job_subcategories, skills, industries, sources: call " +
+        "`find_filter_values` with that facet\n\n" +
+        "companies, skills, industries, company_categories, job_categories, job_subcategories and " +
+        "occupation_ids each have an exclude_ twin (exclude_companies, exclude_skills, …). Set " +
+        "search_description: false for title-only matching. Use discovered_after for 'new since …' " +
+        "questions.\n\n" +
         "Salary filters only match jobs whose employer published a range, which is a minority of listings — " +
         "applying one narrows results far more than it looks. Set `include_facets` to see how the matches " +
         "break down before narrowing further.",
-      inputSchema: z.object({
-              q: z.string().optional().describe("Free-text query matched against title and description."),
-              location: z.string().optional().describe("Free-form location, e.g. 'Berlin, Germany' or 'United States'."),
-              work_model: z
-                .string()
-                .optional()
-                .describe(`Work model. One or more of: ${WORK_MODELS.join(", ")} (comma-separated).`),
-              employment_type: z
-                .string()
-                .optional()
-                .describe(`Employment type. One or more of: ${EMPLOYMENT_TYPES.join(", ")} (comma-separated).`),
-              experience_level: z
-                .string()
-                .optional()
-                .describe(`Experience level. One or more of: ${EXPERIENCE_LEVELS.join(", ")} (comma-separated).`),
-              source: z.string().optional().describe("ATS source ids, comma-separated."),
-              skills: z.string().optional().describe("Required skills, comma-separated."),
-              industries: z.string().optional().describe("Company industries, comma-separated."),
-              min_salary_usd: z.number().int().optional().describe("Only jobs with a published range at or above this."),
-              max_salary_usd: z.number().int().optional().describe("Only jobs with a published range at or below this."),
-              posted_after: z.string().optional().describe("ISO-8601 timestamp; only jobs posted on or after it."),
-              posted_before: z.string().optional().describe("ISO-8601 timestamp; only jobs posted on or before it."),
-              include_facets: z.boolean().optional().describe("Return counts per filter value alongside the results."),
-              page: z.number().int().min(1).optional().describe("1-based page number. Defaults to 1."),
-              page_size: z.number().int().min(1).max(50).optional().describe("Results per page, max 50. Defaults to 20."),
-            }),
+      inputSchema: SEARCH_JOBS_INPUT,
       annotations: {
         title: "Search jobs with filters",
         readOnlyHint: true,
@@ -334,9 +337,10 @@ function buildServer(): McpServer {
     async (args, ctx) => {
       try {
         const res = await callApi<UpstreamSearchResponse>(
-          "GET",
-          `/api/mcp/jobs/search${query({ ...args, page_size: args.page_size ?? 20 })}`,
+          "POST",
+          "/api/mcp/jobs/search",
           bearerFrom(ctx),
+          toMcpSearchBody(args),
         );
 
         let text = renderSearchResults(res);
@@ -352,6 +356,114 @@ function buildServer(): McpServer {
 
         return {
           content: [{ type: "text", text }],
+          structuredContent: res as unknown as { [k: string]: unknown },
+        };
+      } catch (err) {
+        return toToolError(err);
+      }
+    },
+  );
+
+  // ── find_companies ───────────────────────────────────────────────────────
+  server.registerTool(
+    "find_companies",
+    {
+      title: "Find companies",
+      description:
+        "Look up companies by name or website domain (prefix match, 2+ characters) and return each with its " +
+        "Jobo company ids, domain, HQ country and live job count — companies with live jobs first. Use it " +
+        "before filtering `search_jobs` by company: pass every id of the company you mean as `companies` " +
+        "(one company can have several ids, one per careers board). Free.",
+      inputSchema: z.object({
+        q: z.string().describe("Company name or domain prefix, e.g. 'stripe' or 'stripe.com'."),
+        limit: z.number().int().min(1).max(20).optional().describe("Maximum companies to return (1–20, default 8)."),
+      }),
+      annotations: {
+        title: "Find companies",
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      _meta: {
+        "openai/toolInvocation/invoking": "Looking up companies…",
+        "openai/toolInvocation/invoked": "Companies found",
+      },
+    },
+    async ({ q, limit }, ctx) => {
+      try {
+        const res = await callApi<UpstreamCompanySuggestionsResponse>(
+          "GET",
+          `/api/mcp/companies/suggest${query({ q, limit })}`,
+          bearerFrom(ctx),
+        );
+        return {
+          content: [{ type: "text", text: renderCompanySuggestions(q, res.suggestions ?? []) }],
+          structuredContent: res as unknown as { [k: string]: unknown },
+        };
+      } catch (err) {
+        return toToolError(err);
+      }
+    },
+  );
+
+  // ── find_filter_values ───────────────────────────────────────────────────
+  server.registerTool(
+    "find_filter_values",
+    {
+      title: "Find filter values",
+      description:
+        "List the values of one open-vocabulary `search_jobs` filter, optionally narrowed by `q`. Facets: " +
+        "occupations (a role name such as 'registered nurse' → its occupation id, category and subcategory, " +
+        "for occupation_ids), job_categories, job_subcategories (with their category), skills, industries, " +
+        "company_categories, sources (ATS ids). Without `q` it lists the values with the most live jobs, with " +
+        "counts. Use it to turn a role, field or skill the user names into the exact value a filter takes. Free.",
+      inputSchema: z.object({
+        facet: z.enum(FILTER_VALUE_FACETS).describe("Which filter's values to list."),
+        q: z
+          .string()
+          .optional()
+          .describe(
+            "What to look for. For occupations, any part of the role, subcategory or category name ('nurse'); " +
+              "for the other facets, the start of a value ('nurs', 'pyth'). Omit for the most common values.",
+          ),
+        limit: z.number().int().min(1).max(100).optional().describe("Maximum values to return (default 25)."),
+      }),
+      annotations: {
+        title: "Find filter values",
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      _meta: {
+        "openai/toolInvocation/invoking": "Looking up filter values…",
+        "openai/toolInvocation/invoked": "Filter values ready",
+      },
+    },
+    async ({ facet, q, limit }, ctx) => {
+      try {
+        // Occupation facet buckets are keyed by id, so a name never prefix-
+        // matches them: a named role goes to the taxonomy search instead.
+        if (facet === "occupations" && q?.trim()) {
+          const found = await callApi<UpstreamOccupationSearchResponse>(
+            "GET",
+            `/api/mcp/occupations${query({ q: q.trim(), limit: limit ?? 25 })}`,
+            bearerFrom(ctx),
+          );
+          return {
+            content: [{ type: "text", text: renderOccupationMatches(q.trim(), found.occupations ?? []) }],
+            structuredContent: found as unknown as { [k: string]: unknown },
+          };
+        }
+
+        const res = await callApi<UpstreamFilterOptionsResponse>(
+          "GET",
+          `/api/mcp/filter-options/${encodeURIComponent(facet)}${query({ q, limit: limit ?? 25 })}`,
+          bearerFrom(ctx),
+        );
+        return {
+          content: [{ type: "text", text: renderFilterValues(facet, q, res.options ?? []) }],
           structuredContent: res as unknown as { [k: string]: unknown },
         };
       } catch (err) {
@@ -417,9 +529,11 @@ function buildServer(): McpServer {
     {
       title: "List available filters",
       description:
-        "Return the accepted values for every `search_jobs` filter, with how many jobs currently carry each " +
-        "one. Call this when you are unsure what a filter accepts, or to size the index before narrowing a " +
-        "search. Values are canonical — use them verbatim.",
+        "Return the fixed vocabularies `search_jobs` accepts (work models, employment types, experience " +
+        "levels, company categories, languages, sort orders, ATS sources), with live counts for the common " +
+        "ones. Call this when you are unsure what a filter accepts, or to size the index before narrowing a " +
+        "search. Values are canonical — use them verbatim. For companies, occupations, job categories, " +
+        "skills and industries use `find_companies` and `find_filter_values`.",
       inputSchema: z.object({}),
       annotations: {
         title: "List filters",
@@ -441,7 +555,16 @@ function buildServer(): McpServer {
         sections.push(`**work_model:** ${res.enums.work_models.join(", ")}`);
         sections.push(`**employment_type:** ${res.enums.employment_types.join(", ")}`);
         sections.push(`**experience_level:** ${res.enums.experience_levels.join(", ")}`);
-        sections.push(`**source:** ${res.enums.sources.join(", ")}`);
+        sections.push(`**company_categories:** ${COMPANY_CATEGORIES.join(", ")}`);
+        sections.push(
+          `**language** (ISO 639-1; any code works): ${LANGUAGES.map((l) => `${l.code} (${l.name})`).join(", ")}`,
+        );
+        sections.push(`**sort:** ${SEARCH_SORTS.join(", ")}`);
+        sections.push(`**sources:** ${res.enums.sources.join(", ")}`);
+        sections.push(
+          "**companies, occupation_ids, job_categories, job_subcategories, skills, industries:** open " +
+            "vocabularies — look values up with `find_companies` and `find_filter_values`.",
+        );
 
         for (const [name, values] of Object.entries(res.facets ?? {})) {
           const top = values.slice(0, 15).map((v) => `${v.key} (${v.count.toLocaleString("en-US")})`).join(", ");

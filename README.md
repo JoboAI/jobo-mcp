@@ -45,12 +45,37 @@ pair a server cannot be used as a ChatGPT Deep Research connector at all.
 | --- | --- |
 | `search` | Canonical Deep Research contract: `{query}` → `{results: [{id, title, url}]}`. |
 | `fetch` | Canonical Deep Research contract: `{id}` → `{id, title, text, url, metadata}`. |
-| `search_jobs` | Structured search — location, work model, employment type, experience level, source, skills, industries, salary, date, facets, paging. |
+| `search_jobs` | Structured search over the full connector filter set — see below. |
+| `find_companies` | Company name or domain prefix → each company's ids, domain, country and live job count. |
+| `find_filter_values` | Values of one open-vocabulary filter (occupations, job categories/subcategories, skills, industries, company categories, sources), with live counts. |
 | `get_job_details` | Full listing for clients not using the Deep Research contract. |
-| `list_filters` | Accepted values for every filter, with live counts. |
+| `list_filters` | The fixed vocabularies (work models, employment types, levels, company categories, languages, sorts, sources), with live counts. |
 
 `search`/`fetch` deliberately take the minimum arguments the contract allows. Anything with structure
 should go through `search_jobs`, where filters are real parameters rather than hopeful free text.
+
+### `search_jobs` filters
+
+`search_jobs` exposes every filter of the shared connector contract (`JOB_SEARCH_FILTERS` in
+`@jobo-ai/connector-core`, pinned exactly in `package.json`) except `description_format` — MCP search
+results carry no description. `src/filters.test.ts` fails when the contract gains a filter the tool doesn't
+expose.
+
+- `q`, `search_description` (`false` = title-only), `location` (one or several places), `sources`
+  (`source` is a 1.1 alias)
+- `companies` — ids from `find_companies` (send every id of the company), domains or whole names
+- `work_model`, `employment_type`, `experience_level`, `language` (ISO 639-1)
+- `skills`, `industries`, `company_categories`, `job_categories`, `job_subcategories`, `occupation_ids`
+- `exclude_` twins of `companies`, `skills`, `industries`, `company_categories`, `job_categories`,
+  `job_subcategories`, `occupation_ids`
+- `min_salary_usd`, `max_salary_usd`, `posted_after`/`posted_before`, `discovered_after`/`discovered_before`
+- `sort` (`relevance`, `discovered_desc`, `discovered_asc`), `include_facets`, `page`, `page_size`
+
+List filters take arrays; comma-separated strings also work, except for `companies` (a string is one
+company — names contain commas). The tool POSTs to `/api/mcp/jobs/search`; the lookups call
+`/api/mcp/companies/suggest`, `/api/mcp/filter-options/{facet}` and (for a named occupation)
+`/api/mcp/occupations`, the OAuth twins of the connector endpoints and `GET /api/occupations` (those take an
+API key, which this gateway never holds).
 
 ### What `fetch` returns
 
