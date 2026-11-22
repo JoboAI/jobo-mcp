@@ -11,6 +11,8 @@ Full client setup (Claude, ChatGPT, Cursor, Codex CLI) and the tool reference:
   `createMcpHandler`, one factory for both eras).
 - **Auth:** OAuth 2.1. This is a Resource Server; the Authorization Server is the Jobo API. Clients log in
   with their Jobo account — no API key copy-paste. Required scope: `jobs:read`.
+- **Discovery without a token:** a public [Server Card](#discovery-without-a-token) at `/mcp/server-card`,
+  and, opt-in, the tool schemas themselves (`MCP_PUBLIC_DISCOVERY`).
 
 ## Self-hosting
 
@@ -90,11 +92,49 @@ The server is a gateway, not the cryptographic authority. The C# External API va
 OpenIddict against the same issuer, audience and `jobs:read` scope; verifying the signature a second time
 here would only let the two validators drift. So this does the minimum a gateway must:
 
-1. Require a Bearer token; absent → `401` with the resource-metadata challenge, starting the OAuth flow.
+1. Require a Bearer token; absent → `401` with the resource-metadata challenge (naming the `jobs:read`
+   scope), starting the OAuth flow. With `MCP_PUBLIC_DISCOVERY` on, discovery requests are the one
+   exception — see below.
 2. Cheaply reject an already-expired token (decode `exp`, no signature check) so long-lived clients
    refresh rather than forwarding a dead token.
 3. Attach the raw current-request token to `req.auth`, so every tool call forwards the token the client
    just sent — never one captured at session-initialize.
+
+## Discovery without a token
+
+Two layers. Only the first is on by default.
+
+**Server Card — always on.** `GET /mcp/server-card` returns the MCP Server Card
+([SEP-2127](https://modelcontextprotocol.io/seps/2127-mcp-server-cards)): name, title, version,
+description, icons, the endpoint URL and the protocol versions it answers. `GET /.well-known/ai-catalog.json`
+points at it, for a client that knows only the host. Both are static, CORS-open and cacheable. The card
+format has no tools in it and no auth fields: tools stay behind `tools/list`, and a client still learns
+about OAuth from `/.well-known/oauth-protected-resource`. The card is built from the same constants as
+`server/discover`, and a test fails when it drifts from `server.json`.
+
+**In-protocol discovery — `MCP_PUBLIC_DISCOVERY=true`.** A request without a token is then answered when
+it asks only for discovery: `server/discover`, `initialize`, `notifications/initialized`, `ping`,
+`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`. A registry, a directory or a
+client can read every tool's schema before anyone signs in. `tools/call` is never on that list — it gets
+the same `401` challenge as before, as a real HTTP status, because clients start sign-in from the status
+and not from an error inside a `200`. A batch qualifies only if every message in it does, and a request
+that does carry a token is checked as always.
+
+It is off by default because it moves sign-in from connecting to the first tool call:
+
+- The [2026-07-28 spec](https://modelcontextprotocol.io/specification/2026-07-28/changelog) does not ask
+  for it. `server/discover` is mandatory to implement, but nothing says it is answered without a token,
+  and the authorization section still expects one on every request. Tokenless `tools/list` is a
+  convention some servers and SDKs have adopted, not a requirement.
+- A client that starts OAuth from any `401` keeps working — Claude documents this as
+  [lazy authentication](https://claude.com/docs/connectors/building/lazy-authentication): it connects,
+  lists tools, and asks for sign-in on the first call. A client that only looks for the `401` while
+  connecting reports "connected" and then fails every call.
+- Every tool here needs a token, so nothing becomes usable earlier, only visible earlier.
+
+Turn it on when being readable by scanners matters more than signing in up front, and try the clients you
+care about first. Each tool carries `securitySchemes: [{ type: "oauth2", scopes: ["jobs:read"] }]` in its
+`_meta` either way, so a client that lists before sign-in knows every tool needs it.
 
 ## Stateless by design
 
@@ -111,6 +151,7 @@ with no `mcp-session-id` issued.
 | `MCP_RESOURCE_URL` | `https://jobs-mcp.jobo.world` | OAuth audience. **Must differ from the analytics server's `mcp.jobo.world`.** |
 | `OAUTH_AUTH_SERVER_URL` | `https://enterprise.jobo.world` | Authorization Server. |
 | `PORT` | `3002` | Analytics server uses 3001. |
+| `MCP_PUBLIC_DISCOVERY` | off | `true` answers the handshake and the list methods without a token. See [Discovery without a token](#discovery-without-a-token). |
 
 ## Development
 

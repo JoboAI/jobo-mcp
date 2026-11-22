@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.3.0
+
+Discovery without a token: what a client, registry or directory can learn about the server before
+anyone signs in.
+
+### Added
+
+- **Server Card** (MCP SEP-2127) at `GET /mcp/server-card`: the server's identity, endpoint URL and
+  supported protocol versions, as `application/mcp-server-card+json`. Public, CORS-open, cacheable
+  (`ETag`, `304` on `If-None-Match`). It carries no tools — the card format leaves those to `tools/list`.
+- **AI Catalog** at `GET /.well-known/ai-catalog.json`, pointing at the card, so a client that knows only
+  the host can find it.
+- **`MCP_PUBLIC_DISCOVERY`** (off by default). Set to `true` and the handshake (`server/discover`,
+  `initialize`, `notifications/initialized`, `ping`) and the list methods (`tools/list`, `prompts/list`,
+  `resources/list`, `resources/templates/list`) are answered without a token, so the tool schemas are
+  readable before sign-in. `tools/call` always needs a token. This moves sign-in from connecting to the
+  first tool call — see "Discovery without a token" in the README before turning it on.
+- Every tool declares `securitySchemes: [{ type: "oauth2", scopes: ["jobs:read"] }]` in its `_meta`, so a
+  client that lists tools before sign-in knows each one needs it.
+- `tools/list` and `server/discover` results carry `cacheScope: "public"` and a 5-minute `ttlMs`
+  (2026-07-28 clients only): the catalogue is the same for every caller.
+
+### Changed
+
+- The `401` challenge names the scope: `WWW-Authenticate: Bearer …, scope="jobs:read"`.
+- `serverInfo.description` is now the registry's one-line description, so `server/discover`, the Server
+  Card and `server.json` say the same thing.
+
 ## 1.2.0
 
 Brings `search_jobs` up to the full job-search filter set shared by every Jobo connector

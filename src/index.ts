@@ -17,9 +17,11 @@
  *   PORT=8080 npx jobo-job-search-mcp             # ...or any port you like
  */
 
+import { createHash } from "node:crypto";
+
 import express from "express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler, McpServer, SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -55,17 +57,47 @@ import {
   toMcpSearchBody,
 } from "./filters.js";
 import { REQUIRED_SCOPE, toToolError } from "./errors.js";
+import {
+  AI_CATALOG_MEDIA_TYPE,
+  SERVER_CARD_MEDIA_TYPE,
+  buildAiCatalog,
+  buildServerCard,
+  etagMatches,
+  isPublicDiscoveryRequest,
+  publicDiscoveryEnabled,
+  serverCardUrl,
+} from "./discovery.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MCP_RESOURCE_URL = process.env.MCP_RESOURCE_URL ?? "https://jobs-mcp.jobo.world";
+const MCP_ENDPOINT_URL = `${MCP_RESOURCE_URL.replace(/\/$/, "")}/mcp`;
 const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterprise.jobo.world").replace(/\/$/, "");
 const PORT = Number(process.env.PORT ?? 3002);
+/** Answer the handshake and the list methods without a token. Opt-in: see `publicDiscoveryEnabled`. */
+const PUBLIC_DISCOVERY = publicDiscoveryEnabled(process.env.MCP_PUBLIC_DISCOVERY);
 
 const SERVER_NAME = "jobo-job-search";
-const SERVER_VERSION = "1.2.0";
+const SERVER_VERSION = "1.3.0";
+
+// Identity shared by `server/discover` and the Server Card, which must not
+// contradict each other. REGISTRY_NAME and the description are the ones in
+// `server.json`; a test fails when the card and that manifest drift apart.
+const REGISTRY_NAME = "world.jobo/job-search";
+const SERVER_TITLE = "Jobo Job Search";
+const SERVER_DESCRIPTION =
+  "Search a live index of millions of open jobs from employer career sites and 200+ ATS platforms.";
+const SERVER_WEBSITE = "https://jobo.world/mcp";
+const SERVER_REPOSITORY = "https://github.com/JoboAI/jobo-mcp";
+const SERVER_ICONS = [
+  { src: "https://jobo.world/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] },
+  { src: "https://jobo.world/favicon.svg", mimeType: "image/svg+xml", sizes: ["any"] },
+];
+
+/** 2026-07-28 first, then every 2025-era revision the legacy fallback answers. */
+const PROTOCOL_VERSIONS = ["2026-07-28", ...SUPPORTED_PROTOCOL_VERSIONS];
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Auth — gateway model
@@ -75,11 +107,16 @@ const SERVER_VERSION = "1.2.0";
 //  and `jobs:read` scope. Verifying the signature a second time here would only
 //  create a way for the two validators to drift. So this does the minimum a
 //  gateway must:
-//    1. Require a Bearer token; absent → 401 with the resource-metadata
-//       challenge so the client starts the OAuth flow.
-//    2. Cheaply reject an already-expired token (decode `exp`, no signature
+//    1. With MCP_PUBLIC_DISCOVERY on, answer discovery (the handshake and the
+//       list methods) without a token, so the tool schemas are readable before
+//       sign-in. Nothing on that path touches the upstream API.
+//    2. Require a Bearer token for everything else; absent → 401 with the
+//       resource-metadata challenge so the client starts the OAuth flow. It
+//       has to be a real HTTP 401: clients start sign-in from the status, not
+//       from an error inside a 200.
+//    3. Cheaply reject an already-expired token (decode `exp`, no signature
 //       check) so long-lived clients refresh instead of forwarding a dead token.
-//    3. Attach the raw, current-request token to `req.auth`, so each tool call
+//    4. Attach the raw, current-request token to `req.auth`, so each tool call
 //       forwards the token the client just sent — never one captured at
 //       session-initialize.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +124,10 @@ const SERVER_VERSION = "1.2.0";
 const RESOURCE_METADATA_URL = `${MCP_RESOURCE_URL}/.well-known/oauth-protected-resource`;
 
 function challenge(error: "invalid_token" | "insufficient_scope" | "invalid_request", description: string): string {
-  return `Bearer realm="${MCP_RESOURCE_URL}", error="${error}", error_description="${description}", resource_metadata="${RESOURCE_METADATA_URL}"`;
+  return (
+    `Bearer realm="${MCP_RESOURCE_URL}", error="${error}", error_description="${description}", ` +
+    `resource_metadata="${RESOURCE_METADATA_URL}", scope="${REQUIRED_SCOPE}"`
+  );
 }
 
 /**
@@ -116,9 +156,14 @@ declare global {
   }
 }
 
-function requireBearer(req: express.Request, res: express.Response, next: express.NextFunction): void {
+function authenticate(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const header = req.headers.authorization ?? "";
   if (!header.startsWith("Bearer ")) {
+    // No token: discovery is answered as it is for everyone, with no `req.auth`.
+    if (PUBLIC_DISCOVERY && isPublicDiscoveryRequest(req.method, req.body)) {
+      next();
+      return;
+    }
     res
       .status(401)
       .header("WWW-Authenticate", challenge("invalid_request", "Bearer token required"))
@@ -173,21 +218,31 @@ const SERVER_INSTRUCTIONS =
   "`senior`). Every result carries a listing URL and an apply URL — cite the listing URL. Never invent a " +
   "job, a company or a salary that did not come back from a tool call.";
 
+/**
+ * Every tool needs the user's token. `tools/list` can be read before sign-in
+ * (MCP_PUBLIC_DISCOVERY), so each tool says so itself: this is the per-tool
+ * declaration ChatGPT reads (`securitySchemes`, carried in `_meta` because the
+ * SDK only passes known top-level tool fields through).
+ */
+const OAUTH_REQUIRED = { securitySchemes: [{ type: "oauth2", scopes: [REQUIRED_SCOPE] }] };
+
+/** The catalogue is the same for every caller and only changes on a deploy. */
+const PUBLIC_CACHE = { ttlMs: 5 * 60 * 1000, cacheScope: "public" } as const;
+
 function buildServer(): McpServer {
   const server = new McpServer(
     {
       name: SERVER_NAME,
-      title: "Jobo Job Search",
+      title: SERVER_TITLE,
       version: SERVER_VERSION,
-      websiteUrl: "https://jobo.world/mcp",
-      description:
-        "Search a live index of millions of open jobs collected from employer career sites and 200+ applicant tracking systems.",
-      icons: [
-        { src: "https://jobo.world/favicon.svg", mimeType: "image/svg+xml", sizes: ["any"] },
-        { src: "https://jobo.world/apple-touch-icon.png", mimeType: "image/png", sizes: ["180x180"] },
-      ],
+      websiteUrl: SERVER_WEBSITE,
+      description: SERVER_DESCRIPTION,
+      icons: SERVER_ICONS,
     },
-    { instructions: SERVER_INSTRUCTIONS },
+    {
+      instructions: SERVER_INSTRUCTIONS,
+      cacheHints: { "server/discover": PUBLIC_CACHE, "tools/list": PUBLIC_CACHE },
+    },
   );
 
   // ── search (canonical) ───────────────────────────────────────────────────
@@ -222,6 +277,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Searching jobs…",
         "openai/toolInvocation/invoked": "Jobs found",
       },
@@ -270,6 +326,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Reading the listing…",
         "openai/toolInvocation/invoked": "Listing read",
       },
@@ -330,6 +387,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Searching jobs…",
         "openai/toolInvocation/invoked": "Jobs found",
       },
@@ -386,6 +444,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Looking up companies…",
         "openai/toolInvocation/invoked": "Companies found",
       },
@@ -437,6 +496,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Looking up filter values…",
         "openai/toolInvocation/invoked": "Filter values ready",
       },
@@ -496,6 +556,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Reading the listing…",
         "openai/toolInvocation/invoked": "Listing read",
       },
@@ -543,6 +604,7 @@ function buildServer(): McpServer {
         idempotentHint: true,
       },
       _meta: {
+        ...OAUTH_REQUIRED,
         "openai/toolInvocation/invoking": "Loading filters…",
         "openai/toolInvocation/invoked": "Filters ready",
       },
@@ -604,6 +666,60 @@ function resourceMetadata(_req: express.Request, res: express.Response): void {
 app.get("/.well-known/oauth-protected-resource", resourceMetadata);
 app.get("/.well-known/oauth-protected-resource/mcp", resourceMetadata);
 
+// Server Card (SEP-2127) and the AI Catalog pointing at it: who the server is
+// and where to connect, for a client that has not connected yet. Public by
+// design — identity and the endpoint URL only, no tools and no credentials.
+// The CORS and cache headers are the ones the card's discovery doc asks for.
+function publicDocument(mediaType: string, document: object): express.RequestHandler {
+  const body = JSON.stringify(document);
+  const etag = `"${createHash("sha256").update(body).digest("base64url").slice(0, 27)}"`;
+  return (req, res) => {
+    res.set({
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET",
+      "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
+      "Access-Control-Expose-Headers": "ETag",
+      "Cache-Control": "public, max-age=3600",
+      ETag: etag,
+    });
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    if (etagMatches(req.headers["if-none-match"], etag)) {
+      res.status(304).end();
+      return;
+    }
+    res.type(mediaType).send(body);
+  };
+}
+
+const serverCard = publicDocument(
+  SERVER_CARD_MEDIA_TYPE,
+  buildServerCard({
+    name: REGISTRY_NAME,
+    title: SERVER_TITLE,
+    version: SERVER_VERSION,
+    description: SERVER_DESCRIPTION,
+    websiteUrl: SERVER_WEBSITE,
+    repositoryUrl: SERVER_REPOSITORY,
+    icons: SERVER_ICONS,
+    endpointUrl: MCP_ENDPOINT_URL,
+    protocolVersions: PROTOCOL_VERSIONS,
+  }),
+);
+const aiCatalog = publicDocument(
+  AI_CATALOG_MEDIA_TYPE,
+  buildAiCatalog(REGISTRY_NAME, serverCardUrl(MCP_ENDPOINT_URL)),
+);
+// `/mcp/server-card` is the reserved location: the card sits under the endpoint
+// it describes. It is its own route, outside `authenticate` — the card must
+// never ask for a token.
+app.get("/mcp/server-card", serverCard);
+app.options("/mcp/server-card", serverCard);
+app.get("/.well-known/ai-catalog.json", aiCatalog);
+app.options("/.well-known/ai-catalog.json", aiCatalog);
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", server: `${SERVER_NAME}-mcp`, version: SERVER_VERSION });
 });
@@ -624,7 +740,7 @@ const mcpHandler = createMcpHandler(buildServer, {
 const handleMcp = toNodeHandler(mcpHandler, {
   onerror: (err) => console.error("MCP request handling failed:", err),
 });
-app.all("/mcp", requireBearer, (req, res) => {
+app.all("/mcp", authenticate, (req, res) => {
   void handleMcp(req, res, req.body);
 });
 
@@ -636,5 +752,9 @@ if (process.env.NODE_ENV !== "test") {
     console.log(`  Authorization srv: ${AUTH_SERVER_URL}`);
     console.log(`  Upstream API:      ${API_BASE_URL}`);
     console.log(`  Token validation:  delegated to the External API (${REQUIRED_SCOPE})`);
+    console.log(
+      `  Public discovery:  ${PUBLIC_DISCOVERY ? "on (handshake + list methods need no token)" : "off (set MCP_PUBLIC_DISCOVERY=true)"}`,
+    );
+    console.log(`  Server card:       ${serverCardUrl(MCP_ENDPOINT_URL)}`);
   });
 }
