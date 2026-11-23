@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "jobo-job-search": {
+      "type": "streamable-http",
+      "url": "https://jobs-mcp.jobo.world/mcp"
+    }
+  }
+}

@@ -1,5 +1,7 @@
 # Jobo Job Search MCP Server
 
+[![Jobo Job Search MCP server](https://glama.ai/mcp/servers/JoboAI/jobo-mcp/badges/score.svg)](https://glama.ai/mcp/servers/JoboAI/jobo-mcp)
+
 Remote MCP server exposing Jobo's live job index — millions of listings collected from employer career
 sites and 200+ applicant tracking systems — to LLM clients.
 
@@ -185,3 +187,19 @@ hourly. Note the official registry has **no per-server web page** by design — 
 aggregators. The downstream surfaces differ: PulseMCP emits a dofollow link, Glama and mcp.so are
 `nofollow`. Manual directory submissions (Claude, ChatGPT, aggregator claims) live in
 `../MCP-DISTRIBUTION.md`.
+
+## Directory files
+
+Some directories read a file from the root of the public repository instead of taking a submission.
+These files exist for them. None is in the npm tarball; they reach the public mirror with every merge.
+
+| File | Read by | What it does |
+| --- | --- | --- |
+| `gemini-extension.json`, `GEMINI.md` | [Gemini CLI extension gallery](https://geminicli.com/extensions/browse/) | Makes the repository an installable Gemini CLI extension that adds the hosted server. The gallery crawls public repositories that carry the `gemini-cli-extension` topic. |
+| `plugin.json`, `mcp.json` | Directories that scan for the [Agent Plugins](https://open-plugins.com) standard, such as Cursor Directory | Declares the hosted server as a plugin. The standard allows no credentials in headers, so only this OAuth server fits it. |
+| `llms-install.md` | Agents that install a server from its repository, such as Cline | Tells the agent to add the hosted URL and not to build or run this code. |
+| `glama.json` | [Glama](https://glama.ai/mcp/servers/JoboAI/jobo-mcp) | Names the GitHub accounts that may manage the listing, because the repository belongs to an organization. |
+
+`src/manifests.test.ts` fails when `gemini-extension.json` or `plugin.json` carries a different version
+from `package.json`, or when `gemini-extension.json` or `mcp.json` points anywhere but the endpoint
+`server.json` advertises.

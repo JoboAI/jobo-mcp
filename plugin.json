@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "jobo-job-search",
+  "version": "1.3.0",
+  "description": "Search millions of live job listings from employer career sites and 200+ ATS platforms.",
+  "author": {
+    "name": "Jobo",
+    "email": "support@jobo.world",
+    "url": "https://jobo.world"
+  },
+  "homepage": "https://jobo.world/docs/connectors/mcp",
+  "repository": "https://github.com/JoboAI/jobo-mcp",
+  "license": "MIT",
+  "keywords": ["jobs", "job search", "job listings", "recruiting", "careers", "ats", "mcp"]
+}
