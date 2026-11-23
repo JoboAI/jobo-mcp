@@ -75,6 +75,13 @@ import {
 const MCP_RESOURCE_URL = process.env.MCP_RESOURCE_URL ?? "https://jobs-mcp.jobo.world";
 const MCP_ENDPOINT_URL = `${MCP_RESOURCE_URL.replace(/\/$/, "")}/mcp`;
 const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterprise.jobo.world").replace(/\/$/, "");
+/**
+ * The authorization server's issuer identifier, exactly as its own metadata
+ * publishes it: with a trailing slash. RFC 8414 §3.3 has a client compare the
+ * issuer it was pointed at with the one the metadata declares, and a strict
+ * client (mcp-remote 0.16) refuses to sign in when they differ by that slash.
+ */
+export const AUTH_SERVER_ISSUER = process.env.OAUTH_AUTH_SERVER_ISSUER ?? `${AUTH_SERVER_URL}/`;
 const PORT = Number(process.env.PORT ?? 3002);
 /** Answer the handshake and the list methods without a token. Opt-in: see `publicDiscoveryEnabled`. */
 const PUBLIC_DISCOVERY = publicDiscoveryEnabled(process.env.MCP_PUBLIC_DISCOVERY);
@@ -656,7 +663,7 @@ app.use(express.json({ limit: "1mb" }));
 function resourceMetadata(_req: express.Request, res: express.Response): void {
   res.json({
     resource: MCP_RESOURCE_URL,
-    authorization_servers: [AUTH_SERVER_URL],
+    authorization_servers: [AUTH_SERVER_ISSUER],
     bearer_methods_supported: ["header"],
     scopes_supported: [REQUIRED_SCOPE],
   });
