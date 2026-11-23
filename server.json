@@ -7,7 +7,7 @@
     "url": "https://github.com/JoboAI/jobo-mcp",
     "source": "github"
   },
-  "version": "1.4.0",
+  "version": "1.4.1",
   "websiteUrl": "https://jobo.world/mcp",
   "icons": [
     {
@@ -36,7 +36,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jobo-job-search-mcp",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "streamable-http",
@@ -55,7 +55,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jobo-job-search-mcp",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

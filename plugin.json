@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "jobo-job-search",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Search millions of live job listings from employer career sites and 200+ ATS platforms.",
   "author": {
     "name": "Jobo",

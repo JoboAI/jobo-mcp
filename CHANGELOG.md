@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.1
+
+Tool descriptions, after Glama's tool-quality review of 1.4.0. No tool, parameter or result changed.
+
+### Changed
+
+- **`fetch` and `get_job_details` say how they differ.** `fetch` is the one-document form that pairs with
+  `search`; `get_job_details` returns the same listing with its structured fields and can append the raw
+  employer description. Both say that an unknown id, or one whose listing has closed, returns an error.
+- **`search` and `search_jobs` say what comes back**: up to 20 jobs for `search`; for `search_jobs` the
+  total, one page (20 by default, 50 at most), the fields on each job, and a message rather than an error
+  when nothing matches.
+- **The lookups say what an empty result is** (a message, not an error) and what each line holds.
+  `find_filter_values` names the tools to use for companies and for the fixed vocabularies.
+- `search_jobs` no longer repeats the fixed vocabularies in its description: each parameter lists its own.
+
 ## 1.4.0
 
 Local mode: run the server yourself over stdio and sign in with an API key.

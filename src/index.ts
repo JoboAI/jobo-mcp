@@ -49,13 +49,10 @@ import {
 } from "./format.js";
 import {
   COMPANY_CATEGORIES,
-  EMPLOYMENT_TYPES,
-  EXPERIENCE_LEVELS,
   FILTER_VALUE_FACETS,
   LANGUAGES,
   SEARCH_JOBS_INPUT,
   SEARCH_SORTS,
-  WORK_MODELS,
   toMcpSearchBody,
 } from "./filters.js";
 import { MissingApiKeyError, REQUIRED_SCOPE, setAuthMode, toToolError } from "./errors.js";
@@ -97,7 +94,7 @@ const LOCAL_API_KEY = process.env.JOBO_API_KEY?.trim() || undefined;
 const PUBLIC_DISCOVERY = publicDiscoveryEnabled(process.env.MCP_PUBLIC_DISCOVERY);
 
 const SERVER_NAME = "jobo-job-search";
-const SERVER_VERSION = "1.4.0";
+const SERVER_VERSION = "1.4.1";
 
 // Identity shared by `server/discover` and the Server Card, which must not
 // contradict each other. REGISTRY_NAME and the description are the ones in
@@ -280,9 +277,10 @@ function buildServer(): McpServer {
     {
       title: "Search jobs",
       description:
-        "Search live job listings by free text and return matching jobs with their ids, titles and URLs. " +
-        "Pass the id of any result to `fetch` to read the full listing. For structured filtering " +
-        "(location, salary, seniority, remote-only, specific ATS) prefer `search_jobs`.",
+        "Search live job listings by free text and return up to 20 matching jobs, most relevant first, each " +
+        "with its id, a title line (job title, company, location) and URL. Pass the id of any result to " +
+        "`fetch` to read the full listing. For structured filtering (location, salary, seniority, " +
+        "remote-only, specific ATS) or more than 20 results, prefer `search_jobs`.",
       inputSchema: z.object({
               query: z.string().describe("What to search for, e.g. 'senior rust engineer remote europe'."),
             }),
@@ -332,10 +330,13 @@ function buildServer(): McpServer {
     {
       title: "Fetch a job listing",
       description:
-        "Retrieve one job listing in full by id — responsibilities, qualifications, benefits, compensation, " +
-        "locations and company context, as readable text. Ids come from `search` or `search_jobs`.",
+        "Retrieve one job listing in full by id as a single readable document: responsibilities, " +
+        "qualifications, benefits, compensation, locations and company context. This is the document form " +
+        "that pairs with `search`; `get_job_details` returns the same listing as structured fields and can " +
+        "append the raw employer description. An unknown id, or one whose listing has closed and been " +
+        "removed, returns an error. Free.",
       inputSchema: z.object({
-              id: z.string().describe("The job id returned by `search` or `search_jobs`."),
+              id: z.string().describe("The job's id, a UUID, exactly as `search` or `search_jobs` returned it."),
             }),
       outputSchema: z.object({
               id: z.string(),
@@ -386,13 +387,13 @@ function buildServer(): McpServer {
         "Search live job listings with structured filters. Prefer this over `search` whenever the question " +
         "has any structure to it — a place, a company, an occupation, a salary floor, a seniority, " +
         "remote-only, a language, a particular ATS.\n\n" +
-        "Fixed vocabularies (canonical, lowercase):\n" +
-        `- work_model: ${WORK_MODELS.join(", ")}\n` +
-        `- employment_type: ${EMPLOYMENT_TYPES.join(", ")}\n` +
-        `- experience_level: ${EXPERIENCE_LEVELS.join(", ")}\n` +
-        `- company_categories: ${COMPANY_CATEGORIES.join(", ")}\n` +
-        `- language: ISO 639-1 codes such as ${LANGUAGES.slice(0, 6).map((l) => l.code).join(", ")}\n` +
-        `- sort: ${SEARCH_SORTS.join(", ")}\n\n` +
+        "Returns the total number of matches and one page of jobs, most relevant first unless `sort` says " +
+        "otherwise: 20 by default, `page_size` up to 50, `page` for the next. Each job has its title, " +
+        "company, location, employment type, level, published pay, occupation, top skills, a short summary, " +
+        "listing URL and id; pass the id to `get_job_details` for the full listing. No match returns a " +
+        "message, not an error, with a note when a filter value such as a company name matched nothing.\n\n" +
+        "Fixed vocabularies (work_model, employment_type, experience_level, company_categories, language, " +
+        "sort) are listed on each parameter; values are canonical and lowercase.\n\n" +
         "Open vocabularies — look the values up first:\n" +
         "- companies: call `find_companies` and pass every id it returns for the company\n" +
         "- occupation_ids, job_categories, job_subcategories, skills, industries, sources: call " +
@@ -457,7 +458,8 @@ function buildServer(): McpServer {
         "Look up companies by name or website domain (prefix match, 2+ characters) and return each with its " +
         "Jobo company ids, domain, HQ country and live job count — companies with live jobs first. Use it " +
         "before filtering `search_jobs` by company: pass every id of the company you mean as `companies` " +
-        "(one company can have several ids, one per careers board). Free.",
+        "(one company can have several ids, one per careers board). It returns at most `limit` companies " +
+        "(8 by default), and a message, not an error, when nothing matches. Free.",
       inputSchema: z.object({
         q: z.string().describe("Company name or domain prefix, e.g. 'stripe' or 'stripe.com'."),
         limit: z.number().int().min(1).max(20).optional().describe("Maximum companies to return (1–20, default 8)."),
@@ -501,8 +503,12 @@ function buildServer(): McpServer {
         "List the values of one open-vocabulary `search_jobs` filter, optionally narrowed by `q`. Facets: " +
         "occupations (a role name such as 'registered nurse' → its occupation id, category and subcategory, " +
         "for occupation_ids), job_categories, job_subcategories (with their category), skills, industries, " +
-        "company_categories, sources (ATS ids). Without `q` it lists the values with the most live jobs, with " +
-        "counts. Use it to turn a role, field or skill the user names into the exact value a filter takes. Free.",
+        "company_categories, sources (ATS ids). Without `q` it lists the values with the most live jobs. " +
+        "Each line gives the value to pass, its display name and parent where it has one, and its live job " +
+        "count; a named occupation returns matching ids with their category and subcategory, best first. " +
+        "Nothing matching returns a message, not an error. Use it to turn a role, field or skill the user " +
+        "names into the exact value a filter takes; for companies use `find_companies`, and for the fixed " +
+        "vocabularies `list_filters`. Free.",
       inputSchema: z.object({
         facet: z.enum(FILTER_VALUE_FACETS).describe("Which filter's values to list."),
         q: z
@@ -565,10 +571,12 @@ function buildServer(): McpServer {
       title: "Get full job details",
       description:
         "Read one job listing in full by id: responsibilities, required and preferred qualifications, " +
-        "benefits, compensation, every location, and company context. Same data as `fetch`, for clients " +
-        "that are not using the Deep Research contract.",
+        "benefits, compensation, every location, and company context, as readable text with the structured " +
+        "fields alongside. Use it after `search_jobs`; `fetch` returns the same listing as one text document " +
+        "for clients that pair it with `search`. An unknown id, or one whose listing has closed and been " +
+        "removed, returns an error: search again instead of retrying the id. Free.",
       inputSchema: z.object({
-              id: z.string().describe("The job id returned by a search tool."),
+              id: z.string().describe("The job's id, a UUID, exactly as a search tool returned it."),
               include_description: z
                 .boolean()
                 .optional()
@@ -619,8 +627,10 @@ function buildServer(): McpServer {
         "Return the fixed vocabularies `search_jobs` accepts (work models, employment types, experience " +
         "levels, company categories, languages, sort orders, ATS sources), with live counts for the common " +
         "ones. Call this when you are unsure what a filter accepts, or to size the index before narrowing a " +
-        "search. Values are canonical — use them verbatim. For companies, occupations, job categories, " +
-        "skills and industries use `find_companies` and `find_filter_values`.",
+        "search. It takes no arguments and returns one line per filter, `name: value, value, …`, then the " +
+        "live counts as `value (count)`. Values are canonical — use them verbatim. For companies, " +
+        "occupations, job categories, skills and industries use `find_companies` and `find_filter_values`. " +
+        "Free.",
       inputSchema: z.object({}),
       annotations: {
         title: "List filters",
