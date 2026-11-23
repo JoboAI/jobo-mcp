@@ -14,6 +14,32 @@ export const REQUIRED_SCOPE = "jobs:read";
 /** Where a caller tops the wallet up. Used when the API's own detail is missing. */
 const TOP_UP_URL = "https://enterprise.jobo.world/credits";
 
+/** Where an API key is created, for the local-mode messages. */
+const API_KEYS_URL = "https://enterprise.jobo.world/api-keys";
+
+/**
+ * How this process authenticates to the API: a signed-in user's token on the
+ * hosted server, an API key in local mode. One process is only ever one of
+ * them, and the difference is what a failed call should tell the user to do.
+ */
+let authMode: "oauth" | "apiKey" = "oauth";
+
+export function setAuthMode(mode: "oauth" | "apiKey"): void {
+  authMode = mode;
+}
+
+/** Local mode was started without a key. The tool list still works; a call says this. */
+export class MissingApiKeyError extends UpstreamError {
+  constructor() {
+    super(
+      401,
+      `No Jobo API key is configured. Set the JOBO_API_KEY environment variable for this server ` +
+        `(create a key at ${API_KEYS_URL}) and restart it.`,
+    );
+    this.name = "MissingApiKeyError";
+  }
+}
+
 // A type alias, not an interface: the MCP SDK's tool-result type carries an
 // `[x: string]: unknown` index signature, and only aliases get the implicit
 // index signature that makes them assignable to it.
@@ -45,11 +71,16 @@ export function problemDetail(body: string): string | null {
 
 export function toToolError(err: unknown): ToolError {
   let text: string;
-  if (err instanceof UpstreamError) {
+  if (err instanceof MissingApiKeyError) {
+    text = err.message;
+  } else if (err instanceof UpstreamError) {
     if (err.status === 401) {
       text =
-        "Authentication failed: the Jobo API rejected the access token (it may have expired). " +
-        "Re-authenticate and retry.";
+        authMode === "apiKey"
+          ? `Authentication failed: the Jobo API rejected the API key in JOBO_API_KEY. ` +
+            `Check it at ${API_KEYS_URL}, set the variable again and restart this server.`
+          : "Authentication failed: the Jobo API rejected the access token (it may have expired). " +
+            "Re-authenticate and retry.";
     } else if (err.status === 402) {
       // Job search is billed per job returned. The API sends a problem+json
       // document whose `detail` already reads as a sentence — prefer it, and
@@ -59,7 +90,10 @@ export function toToolError(err: unknown): ToolError {
         `This search could not run because the Jobo wallet is out of credits. ` +
           `Job search is billed per job returned; top up at ${TOP_UP_URL} and try again.`;
     } else if (err.status === 403) {
-      text = `Authorization failed: the token is missing the required '${REQUIRED_SCOPE}' scope.`;
+      text =
+        authMode === "apiKey"
+          ? (problemDetail(err.message) ?? "The Jobo API refused this request for this API key.")
+          : `Authorization failed: the token is missing the required '${REQUIRED_SCOPE}' scope.`;
     } else if (err.status === 404) {
       text = "No job exists with that id. Job ids come from `search` or `search_jobs`; listings are removed once they close.";
     } else if (err.status === 429) {

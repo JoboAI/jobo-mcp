@@ -5,7 +5,13 @@
  * controller notes that the GET search is "convenient for the canonical ChatGPT
  * `search(query)` tool". This server is a thin OAuth-forwarding gateway in front
  * of them.
+ *
+ * In local mode (`--stdio`) there is no OAuth token, only an API key, and the
+ * MCP surface does not take keys. `callApi` then answers the same call from the
+ * public REST API instead: see `apikey.ts`.
  */
+
+import { callPublicApi } from "./apikey.js";
 
 const DEFAULT_API_BASE_URL = "https://connect.jobo.world";
 
@@ -52,7 +58,32 @@ export function isRetryableStatus(status: number): boolean {
   return status === 502 || status === 503 || status === 504;
 }
 
-export async function callApi<T>(method: string, path: string, bearer: string, body?: unknown): Promise<T> {
+/** Who the caller is: a signed-in user's OAuth token, or an API key in local mode. */
+export type Credential = { kind: "oauth"; token: string } | { kind: "apiKey"; key: string };
+
+/**
+ * One call on the MCP surface. A bare string is an OAuth token, as it always
+ * was. With an API key the same call is answered from the public REST API, so
+ * the tools above never need to know which one they are talking to.
+ */
+export async function callApi<T>(
+  method: string,
+  path: string,
+  credential: string | Credential,
+  body?: unknown,
+): Promise<T> {
+  const resolved: Credential = typeof credential === "string" ? { kind: "oauth", token: credential } : credential;
+  if (resolved.kind === "apiKey") return callPublicApi<T>(method, path, resolved.key, body);
+  return requestJson<T>(method, path, { Authorization: `Bearer ${resolved.token}` }, body);
+}
+
+/** The HTTP exchange itself: timeout, the retry rules above, and `UpstreamError` on a refusal. */
+export async function requestJson<T>(
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body?: unknown,
+): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -61,7 +92,7 @@ export async function callApi<T>(method: string, path: string, bearer: string, b
         method,
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${bearer}`,
+          ...headers,
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -94,7 +125,7 @@ export async function callApi<T>(method: string, path: string, bearer: string, b
     }
   }
 
-  throw lastError ?? new Error("callApi: exhausted retries");
+  throw lastError ?? new Error("requestJson: exhausted retries");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +233,8 @@ export interface UpstreamJobDetails {
 }
 
 export interface UpstreamFiltersResponse {
-  total_jobs: number;
+  /** Null in local mode: the public API has no free count of the whole index. */
+  total_jobs: number | null;
   enums: {
     work_models: string[];
     employment_types: string[];

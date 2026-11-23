@@ -42,9 +42,28 @@ with their Jobo account (or creates one at https://enterprise.jobo.world) and ap
    `get_job_details`, `find_companies`, `find_filter_values`, `list_filters`.
 2. Call `list_filters`. It takes no arguments and returns the filter vocabularies.
 
-If the client cannot do OAuth for remote servers, stop and tell the user. Do not fall back to running
-`npx jobo-job-search-mcp` locally: a local copy is still an OAuth resource server and needs the same
-sign-in.
+If the client cannot do OAuth for remote servers, use local mode below instead.
+
+## Local mode, when the client cannot do OAuth
+
+The same server runs as a child process over stdio and signs in with an API key (version 1.4.0 and later):
+
+```json
+{
+  "mcpServers": {
+    "jobo-job-search": {
+      "command": "npx",
+      "args": ["-y", "jobo-job-search-mcp", "--stdio"],
+      "env": { "JOBO_API_KEY": "<the user's Jobo API key>" }
+    }
+  }
+}
+```
+
+Ask the user for their Jobo API key; they create one at https://enterprise.jobo.world/api-keys. Do not
+invent one, and do not run the server without `--stdio`: that starts the HTTP server, which only accepts
+the OAuth sign-in. The server starts and lists its seven tools without a key, so a missing key shows up as
+an error on the first tool call, not at start-up.
 
 ## Cost
 

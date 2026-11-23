@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.4.0
+
+Local mode: run the server yourself over stdio and sign in with an API key.
+
+### Added
+
+- **`--stdio`** serves MCP over stdin and stdout instead of HTTP, for clients that start a server as a
+  child process and for directories that build and inspect one. `npx jobo-job-search-mcp --stdio`.
+- **API-key sign-in in local mode.** Set `JOBO_API_KEY`. There is no browser sign-in: the caller is the
+  account that owns the key. The same seven tools answer from the public REST API (`POST /api/jobs/search`,
+  `GET /api/jobs/{id}`, `/api/connectors/*`, `/api/occupations`) and return what they return on the hosted
+  server, so a key meets the limits, billing and logging it meets everywhere else. Searches are billed per
+  job returned; `get_job_details`, `fetch` and the lookups are free.
+- The tool list is readable without a key. A tool call without one says which variable to set.
+- `server.json` lists the stdio way of running the package next to the HTTP one.
+
+### Changed
+
+- In local mode `list_filters` does not report how many jobs are indexed: the public API has no free count
+  of the whole index, and a search to get one would be billed.
+- In local mode the tools do not declare OAuth (`securitySchemes`), and a rejected key is explained as a
+  rejected key.
+
+### Fixed
+
+- `get_job_details` with `include_description: true` never returned the description: the flag was not sent
+  to the API. It is now.
+
 ## 1.3.0
 
 Discovery without a token: what a client, registry or directory can learn about the server before

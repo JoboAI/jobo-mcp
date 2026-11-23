@@ -30,6 +30,40 @@ OAuth resource server gated on Jobo account sign-in, since the upstream API vali
 the Authorization Server regardless of which copy of the gateway forwarded it. Set `MCP_RESOURCE_URL` to
 match whatever host you actually serve it from — see [Configuration](#configuration) below.
 
+## Local mode: stdio and an API key
+
+For a client that starts MCP servers as child processes, or one that cannot do a browser sign-in:
+
+```bash
+JOBO_API_KEY=jbe_live_… npx jobo-job-search-mcp --stdio
+```
+
+```json
+{
+  "mcpServers": {
+    "jobo-job-search": {
+      "command": "npx",
+      "args": ["-y", "jobo-job-search-mcp", "--stdio"],
+      "env": { "JOBO_API_KEY": "jbe_live_…" }
+    }
+  }
+}
+```
+
+- **Sign-in is the key.** Create one at [enterprise.jobo.world/api-keys](https://enterprise.jobo.world/api-keys).
+  There is no OAuth in this mode; the caller is the account that owns the key.
+- **Same tools, same answers.** The seven tools are answered from the public REST API with the key and
+  projected into the shapes the hosted server returns (`src/apikey.ts`). A key therefore meets the same
+  limits, billing and logging as in any other integration.
+- **Cost.** `search` and `search_jobs` are billed per job returned, at the API's rate. `get_job_details`,
+  `fetch`, `find_companies`, `find_filter_values` and `list_filters` are free.
+- **Without a key** the server still starts and lists its tools, which is what a directory's build check
+  needs. A tool call answers with the variable to set.
+- **One difference:** `list_filters` does not say how many jobs are indexed, because the public API has no
+  free count of the whole index.
+
+Nothing but protocol messages is written to stdout; the start-up line goes to stderr.
+
 ## Why this is a separate server
 
 `Jobo.Enterprise/Jobo.Enterprise.Mcp` was deliberately re-scoped to analytics-only in v4, which removed
@@ -154,6 +188,7 @@ with no `mcp-session-id` issued.
 | `OAUTH_AUTH_SERVER_URL` | `https://enterprise.jobo.world` | Authorization Server. |
 | `PORT` | `3002` | Analytics server uses 3001. |
 | `MCP_PUBLIC_DISCOVERY` | off | `true` answers the handshake and the list methods without a token. See [Discovery without a token](#discovery-without-a-token). |
+| `JOBO_API_KEY` | none | Local mode only (`--stdio`): the API key tool calls are made with. See [Local mode](#local-mode-stdio-and-an-api-key). |
 
 ## Development
 

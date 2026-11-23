@@ -7,18 +7,22 @@
     "url": "https://github.com/JoboAI/jobo-mcp",
     "source": "github"
   },
-  "version": "1.3.0",
+  "version": "1.4.0",
   "websiteUrl": "https://jobo.world/mcp",
   "icons": [
     {
       "src": "https://jobo.world/apple-touch-icon.png",
       "mimeType": "image/png",
-      "sizes": ["180x180"]
+      "sizes": [
+        "180x180"
+      ]
     },
     {
       "src": "https://jobo.world/favicon.svg",
       "mimeType": "image/svg+xml",
-      "sizes": ["any"]
+      "sizes": [
+        "any"
+      ]
     }
   ],
   "remotes": [
@@ -32,7 +36,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jobo-job-search-mcp",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "streamable-http",
@@ -44,6 +48,32 @@
           "description": "Port for the local HTTP server (default 3002).",
           "isRequired": false,
           "format": "number"
+        }
+      ]
+    },
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "jobo-job-search-mcp",
+      "version": "1.4.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--stdio",
+          "description": "Serve MCP over stdio and sign in with an API key (local mode)."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "JOBO_API_KEY",
+          "description": "Your Jobo API key, from https://enterprise.jobo.world/api-keys. Searches are billed to its account per job returned.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
         }
       ]
     }

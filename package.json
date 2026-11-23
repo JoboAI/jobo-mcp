@@ -1,6 +1,6 @@
 {
   "name": "jobo-job-search-mcp",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Job search MCP server — search live job listings and career site jobs from 200+ ATS platforms via Jobo.",
   "mcpName": "world.jobo/job-search",
   "type": "module",

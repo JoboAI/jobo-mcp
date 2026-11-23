@@ -23,12 +23,14 @@ import express from "express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer, SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import type { AuthInfo } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import {
   API_BASE_URL,
   UpstreamError,
   callApi,
+  type Credential,
   type UpstreamCompanySuggestionsResponse,
   type UpstreamFilterOptionsResponse,
   type UpstreamFiltersResponse,
@@ -56,7 +58,8 @@ import {
   WORK_MODELS,
   toMcpSearchBody,
 } from "./filters.js";
-import { REQUIRED_SCOPE, toToolError } from "./errors.js";
+import { MissingApiKeyError, REQUIRED_SCOPE, setAuthMode, toToolError } from "./errors.js";
+import { setUserAgent } from "./apikey.js";
 import {
   AI_CATALOG_MEDIA_TYPE,
   SERVER_CARD_MEDIA_TYPE,
@@ -83,11 +86,18 @@ const AUTH_SERVER_URL = (process.env.OAUTH_AUTH_SERVER_URL ?? "https://enterpris
  */
 export const AUTH_SERVER_ISSUER = process.env.OAUTH_AUTH_SERVER_ISSUER ?? `${AUTH_SERVER_URL}/`;
 const PORT = Number(process.env.PORT ?? 3002);
+/**
+ * Local mode: serve MCP over stdio instead of HTTP, as the caller who owns
+ * `JOBO_API_KEY`. This is how a client that starts servers as child processes
+ * runs it, and how a directory builds and inspects it.
+ */
+const STDIO = process.argv.includes("--stdio");
+const LOCAL_API_KEY = process.env.JOBO_API_KEY?.trim() || undefined;
 /** Answer the handshake and the list methods without a token. Opt-in: see `publicDiscoveryEnabled`. */
 const PUBLIC_DISCOVERY = publicDiscoveryEnabled(process.env.MCP_PUBLIC_DISCOVERY);
 
 const SERVER_NAME = "jobo-job-search";
-const SERVER_VERSION = "1.3.0";
+const SERVER_VERSION = "1.4.0";
 
 // Identity shared by `server/discover` and the Server Card, which must not
 // contradict each other. REGISTRY_NAME and the description are the ones in
@@ -193,10 +203,19 @@ function authenticate(req: express.Request, res: express.Response, next: express
   next();
 }
 
-function bearerFrom(ctx: { http?: { authInfo?: AuthInfo } }): string {
+/**
+ * Who a tool call is made as. On the hosted server that is the token the
+ * client just sent. In local mode (`--stdio`) there is no HTTP request and no
+ * sign-in: the caller is whoever owns the key in `JOBO_API_KEY`.
+ */
+function bearerFrom(ctx: { http?: { authInfo?: AuthInfo } }): Credential {
   const token = ctx.http?.authInfo?.token;
-  if (!token) throw new UpstreamError(401, "Missing access token on the request.");
-  return token;
+  if (token) return { kind: "oauth", token };
+  if (STDIO) {
+    if (!LOCAL_API_KEY) throw new MissingApiKeyError();
+    return { kind: "apiKey", key: LOCAL_API_KEY };
+  }
+  throw new UpstreamError(401, "Missing access token on the request.");
 }
 
 /** Build a querystring, dropping empties so the upstream sees only real filters. */
@@ -231,7 +250,7 @@ const SERVER_INSTRUCTIONS =
  * declaration ChatGPT reads (`securitySchemes`, carried in `_meta` because the
  * SDK only passes known top-level tool fields through).
  */
-const OAUTH_REQUIRED = { securitySchemes: [{ type: "oauth2", scopes: [REQUIRED_SCOPE] }] };
+const OAUTH_REQUIRED = STDIO ? {} : { securitySchemes: [{ type: "oauth2", scopes: [REQUIRED_SCOPE] }] };
 
 /** The catalogue is the same for every caller and only changes on a deploy. */
 const PUBLIC_CACHE = { ttlMs: 5 * 60 * 1000, cacheScope: "public" } as const;
@@ -572,7 +591,7 @@ function buildServer(): McpServer {
       try {
         const res = await callApi<UpstreamJobDetails>(
           "GET",
-          `/api/mcp/jobs/${encodeURIComponent(id)}`,
+          `/api/mcp/jobs/${encodeURIComponent(id)}${query({ include_description: include_description ? true : undefined })}`,
           bearerFrom(ctx),
         );
 
@@ -620,7 +639,8 @@ function buildServer(): McpServer {
       try {
         const res = await callApi<UpstreamFiltersResponse>("GET", "/api/mcp/filters", bearerFrom(ctx));
 
-        const sections: string[] = [`${res.total_jobs.toLocaleString("en-US")} active jobs indexed.`];
+        const sections: string[] =
+          res.total_jobs != null ? [`${res.total_jobs.toLocaleString("en-US")} active jobs indexed.`] : [];
         sections.push(`**work_model:** ${res.enums.work_models.join(", ")}`);
         sections.push(`**employment_type:** ${res.enums.employment_types.join(", ")}`);
         sections.push(`**experience_level:** ${res.enums.experience_levels.join(", ")}`);
@@ -751,8 +771,19 @@ app.all("/mcp", authenticate, (req, res) => {
   void handleMcp(req, res, req.body);
 });
 
-// Skipped under test, which imports `app` directly.
-if (process.env.NODE_ENV !== "test") {
+// Local mode: one client, stdin and stdout. Nothing but protocol messages may
+// reach stdout, so the start-up line goes to stderr.
+if (STDIO) {
+  setAuthMode("apiKey");
+  setUserAgent(`${SERVER_NAME}-mcp/${SERVER_VERSION} (stdio)`);
+  serveStdio(buildServer, { onerror: (err) => console.error("MCP request handling failed:", err) });
+  console.error(
+    `Jobo job-search MCP server on stdio (${LOCAL_API_KEY ? "API key set" : "no JOBO_API_KEY: tool calls will ask for one"}).`,
+  );
+}
+
+// Skipped under test, which imports `app` directly, and in local mode.
+if (!STDIO && process.env.NODE_ENV !== "test") {
   app.listen(PORT, () => {
     console.log(`Jobo job-search MCP server listening on :${PORT}`);
     console.log(`  Resource URL:      ${MCP_RESOURCE_URL}`);

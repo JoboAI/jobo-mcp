@@ -1,6 +1,6 @@
 {
   "name": "jobo-job-search",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Search millions of live job listings from employer career sites and 200+ ATS platforms.",
   "mcpServers": {
     "jobo-job-search": {
