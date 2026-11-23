@@ -28,6 +28,13 @@ Local mode: run the server yourself over stdio and sign in with an API key.
 - `get_job_details` with `include_description: true` never returned the description: the flag was not sent
   to the API. It is now.
 
+### Security
+
+- The lockfile moves to patched releases of the MCP SDK (`@modelcontextprotocol/server` 2.4.0,
+  `@modelcontextprotocol/node` 2.1.2), `zod` 4.6.7, `express` 4.22.3, `hono` 4.13.21, `body-parser` 1.20.9,
+  `qs` 6.16.2 and `proxy-addr` 2.0.8. `npm audit` reports nothing. The image and any build from this
+  repository use the lockfile; an `npx` install already resolved the newest versions in range.
+
 ## 1.3.0
 
 Discovery without a token: what a client, registry or directory can learn about the server before

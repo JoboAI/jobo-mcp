@@ -63,7 +63,7 @@ describe("toToolError — 402 payment required", () => {
     for (const wireBody of ["", "Payment Required", "<html>402</html>", "{}"]) {
       const text = textOf(new UpstreamError(402, wireBody));
       assert.ok(text.includes("out of credits"), `expected a credits explanation, got: ${text}`);
-      assert.ok(text.includes("https://enterprise.jobo.world/credits"), "must tell the model where to top up");
+      assert.match(text, /https:\/\/enterprise\.jobo\.world\/credits/, "must tell the model where to top up");
       assert.ok(!text.includes("<html>"), "must not echo the raw body");
     }
   });
