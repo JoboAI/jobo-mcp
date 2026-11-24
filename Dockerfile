@@ -14,8 +14,9 @@ COPY --from=build /app/dist ./dist
 ENV NODE_ENV=production
 ENV JOBO_API_URL=https://connect.jobo.world
 ENV OAUTH_AUTH_SERVER_URL=https://enterprise.jobo.world
-# Distinct host from the analytics server (mcp.jobo.world) — the resource URL is
-# the OAuth audience, so the two must not share one.
+# The URL clients connect to, named as the `resource` in the protected-resource
+# metadata and the 401 challenge. Not the token audience: tokens carry the
+# audience of the jobs:read scope, which the External API checks.
 ENV MCP_RESOURCE_URL=https://jobs-mcp.jobo.world
 ENV PORT=3002
 

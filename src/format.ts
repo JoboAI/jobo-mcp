@@ -45,7 +45,10 @@ export interface FetchPayload {
 /** Render a location as a single human phrase. */
 export function formatLocation(job: UpstreamJobSummary): string {
   const loc = job.location;
-  if (!loc) return job.workplace_type === "Remote" ? "Remote" : "Location not stated";
+  // Search results carry the display name ("Remote"), but the API falls back to
+  // the raw key ("remote") for a value it has no display name for, and compares
+  // without case itself. So does this.
+  if (!loc) return job.workplace_type?.toLowerCase() === "remote" ? "Remote" : "Location not stated";
 
   const parts = [loc.city, loc.region, loc.country].filter((p): p is string => Boolean(p && p.trim()));
   const place = parts.join(", ");

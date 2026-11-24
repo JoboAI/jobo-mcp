@@ -12,6 +12,7 @@
  */
 
 import { callPublicApi } from "./apikey.js";
+import { rejectedTokens } from "./rejected-tokens.js";
 
 const DEFAULT_API_BASE_URL = "https://connect.jobo.world";
 
@@ -74,7 +75,53 @@ export async function callApi<T>(
 ): Promise<T> {
   const resolved: Credential = typeof credential === "string" ? { kind: "oauth", token: credential } : credential;
   if (resolved.kind === "apiKey") return callPublicApi<T>(method, path, resolved.key, body);
-  return requestJson<T>(method, path, { Authorization: `Bearer ${resolved.token}` }, body);
+  try {
+    return await requestJson<T>(method, path, { Authorization: `Bearer ${resolved.token}` }, body);
+  } catch (err) {
+    // The API refused the token although its `exp` was still good: revoked, or
+    // signed with a key that has since rotated. This call still gets its tool
+    // error; the gateway answers the token's next request with a 401, so the
+    // client signs in again (see `rejected-tokens.ts`).
+    if (err instanceof UpstreamError && err.status === 401) rejectedTokens.remember(resolved.token);
+    throw err;
+  }
+}
+
+/**
+ * A job id: a UUID, the only shape `GET /api/mcp/jobs/{id:guid}` routes. Checked
+ * before a request is built, so a word in its place ("search", "expired") can
+ * never turn into the path of some other endpoint.
+ */
+export const JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isJobId(value: string): boolean {
+  return JOB_ID_PATTERN.test(value);
+}
+
+/**
+ * The MCP-surface path of one job. Refuses anything but a UUID with the 404 an
+ * unknown job gets, without a request: `fetch({id: "search"})` would otherwise
+ * be `GET /api/mcp/jobs/search`, a billed search.
+ */
+export function jobPath(id: string): string {
+  if (!isJobId(id)) throw new UpstreamError(404, "");
+  return `/api/mcp/jobs/${id}`;
+}
+
+/**
+ * The API's 503 for a search that ran out of time. It deliberately sends no
+ * Retry-After: the same request fails the same way again, so it is not retried
+ * here and the tool error asks for a narrower search instead.
+ */
+export const SEARCH_TIMED_OUT_TITLE = "Search took too long";
+
+function isSearchTimeout(status: number, body: string): boolean {
+  if (status !== 503 || !body.startsWith("{")) return false;
+  try {
+    return (JSON.parse(body) as { title?: unknown }).title === SEARCH_TIMED_OUT_TITLE;
+  } catch {
+    return false;
+  }
 }
 
 /** The HTTP exchange itself: timeout, the retry rules above, and `UpstreamError` on a refusal. */
@@ -100,7 +147,7 @@ export async function requestJson<T>(
 
       if (!response.ok) {
         const text = (await response.text()).trim();
-        if (isRetryableStatus(response.status) && attempt < MAX_ATTEMPTS) {
+        if (isRetryableStatus(response.status) && attempt < MAX_ATTEMPTS && !isSearchTimeout(response.status, text)) {
           lastError = new UpstreamError(response.status, text);
           await sleep(RETRY_BASE_DELAY_MS * attempt);
           continue;

@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.4.2
+
+Fixes from a code review: job ids, sign-in after a refused token, error text, and what a search costs.
+
+### Changed
+
+- **`search` returns up to 10 jobs**, down from 20, so one call bills at most 10.
+- **Both search tools say a search costs money**: billed per job returned, the plan's included jobs first and
+  then the wallet, nothing for an empty result. `search_jobs` asks for a small `page_size`.
+- **Employer text is marked as untrusted.** The server instructions say listing text is written by employers
+  and is data, not instructions, and the description `get_job_details` appends is headed the same way.
+- `@jobo-ai/connector-core` is pinned to `0.5.0`.
+
+### Fixed
+
+- **`fetch` and `get_job_details` take only a UUID.** A word in its place (`search`, `expired`) used to
+  become the path of another endpoint, one of them the billed search. It is now refused before anything is
+  sent, in both modes.
+- **A token the API refuses now leads to sign-in.** When the API refuses a token that has not expired
+  (revoked, signing key rotated), that call returns a tool error as before, and every later request with
+  the token gets an HTTP 401 challenge for about five minutes, so the client signs in again instead of
+  staying connected while each call fails. Only a hash of the token is kept, in memory.
+- **No raw JSON in error text.** A 400 is read into a sentence, with each invalid field. A 503 names the
+  wait the API asked for. A search that ran out of time asks for a narrower search instead of a retry, and
+  in local mode is no longer sent three times.
+- **A 404 says what was missing**: a closed listing for the job tools, an unpublished facet for
+  `find_filter_values`, a sandbox key in local mode. It used to say "No job exists with that id" for all.
+- A remote job with no location showed "Location not stated" when the API sent the work model in lowercase.
+- `server.json` lists `MCP_RESOURCE_URL` for the local HTTP server. The README no longer calls it the OAuth
+  audience: tokens are issued for the audience of the `jobs:read` scope, whatever this variable says.
+
 ## 1.4.1
 
 Tool descriptions, after Glama's tool-quality review of 1.4.0. No tool, parameter or result changed.

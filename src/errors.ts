@@ -7,7 +7,7 @@
  * either parrots verbatim or silently gives up on.
  */
 
-import { UpstreamError } from "./upstream.js";
+import { SEARCH_TIMED_OUT_TITLE, UpstreamError } from "./upstream.js";
 
 export const REQUIRED_SCOPE = "jobs:read";
 
@@ -69,11 +69,120 @@ export function problemDetail(body: string): string | null {
   return typeof detail === "string" && detail.trim().length > 0 ? detail.trim() : null;
 }
 
-export function toToolError(err: unknown): ToolError {
+interface UpstreamBody {
+  /** A machine-readable code, e.g. `not_available_in_sandbox`. */
+  code: string | null;
+  /** The problem's `title`, e.g. "Search took too long". */
+  title: string | null;
+  /** The sentence the API wrote for a person: `detail`, else `error`, else `title`. */
+  detail: string | null;
+  /** Per-field messages of a validation problem, flattened. */
+  fieldErrors: string[];
+}
+
+/**
+ * Read the API's error body. It answers with RFC 9457 problem documents
+ * (`detail`, `title`, and `errors` on a validation problem) and, from the key
+ * check, with a bare `{ "error": "…" }`. Anything else that is JSON yields
+ * nothing, so the caller falls back to its own sentence rather than surface a
+ * fragment of JSON. A short plain-text body (no JSON, no HTML) is taken as the
+ * sentence itself. The same reading as `readUpstreamBody` in the developer
+ * server (`../dev-mcp/src/errors.ts`).
+ */
+export function readUpstreamBody(body: string): UpstreamBody {
+  const empty: UpstreamBody = { code: null, title: null, detail: null, fieldErrors: [] };
+  const trimmed = body?.trim() ?? "";
+  if (!trimmed) return empty;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    const plain = !/^[<{[]/.test(trimmed) && trimmed.length <= 300;
+    return plain ? { ...empty, detail: trimmed } : empty;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return empty;
+  const record = parsed as Record<string, unknown>;
+  const text = (key: string): string | null => {
+    const value = record[key];
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  };
+
+  const fieldErrors: string[] = [];
+  if (typeof record.errors === "object" && record.errors !== null) {
+    for (const [field, messages] of Object.entries(record.errors as Record<string, unknown>)) {
+      for (const message of Array.isArray(messages) ? messages : [messages]) {
+        if (typeof message === "string") fieldErrors.push(`${field}: ${message}`);
+      }
+    }
+  }
+  return {
+    code: text("code"),
+    title: text("title"),
+    detail: text("detail") ?? text("error") ?? text("title"),
+    fieldErrors,
+  };
+}
+
+/** Text that ends like a sentence, so the next one can follow it. */
+export function sentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/** The tools that read one job by id, where a 404 means the job is gone. */
+const JOB_TOOLS: ReadonlySet<string> = new Set(["fetch", "get_job_details"]);
+
+function notFoundMessage(body: UpstreamBody, tool: string | undefined): string {
+  if (tool !== undefined && JOB_TOOLS.has(tool)) {
+    return (
+      "No job exists with that id. Job ids come from `search` or `search_jobs`; listings are removed once they " +
+      "close, so search again rather than retrying the id."
+    );
+  }
+  if (body.code === "not_available_in_sandbox") {
+    return (
+      "This lookup is not available with a sandbox key (jbe_test_…): the sandbox serves job search and lookups by " +
+      "id only. Use a live key (jbe_live_…) for it; the lookups are free."
+    );
+  }
+  if (tool === "find_filter_values") {
+    return (
+      `${body.detail ? sentence(body.detail) : "Those filter values are not available in this environment."} ` +
+      "Search with the other filters, or by keyword, instead."
+    );
+  }
+  return body.detail ? sentence(body.detail) : "The Jobo API has nothing at that address (HTTP 404).";
+}
+
+function serverErrorMessage(err: UpstreamError, body: UpstreamBody): string {
+  // The one 5xx that waiting will not fix: the search itself was too broad or
+  // too heavy for the time limit, and the API says so by sending no Retry-After.
+  if (body.title === SEARCH_TIMED_OUT_TITLE) {
+    return (
+      "The search did not finish within its time limit, and running the same search again will not help. " +
+      "Narrow it (fewer filters or places, or a shorter query) and search again. Nothing was billed."
+    );
+  }
+  const what = `The Jobo API is temporarily unavailable (HTTP ${err.status})`;
+  const why = body.detail ? `: ${sentence(body.detail)}` : ".";
+  const when =
+    err.retryAfterSeconds != null
+      ? `Try again in ${err.retryAfterSeconds} second${err.retryAfterSeconds === 1 ? "" : "s"}.`
+      : "Try again shortly.";
+  return `${what}${why} ${when} Nothing was billed.`;
+}
+
+/**
+ * The tool error for anything a tool call threw. `tool` is the tool that
+ * failed: a 404 means a closed listing to `fetch`, and an unpublished facet to
+ * `find_filter_values`.
+ */
+export function toToolError(err: unknown, tool?: string): ToolError {
   let text: string;
   if (err instanceof MissingApiKeyError) {
     text = err.message;
   } else if (err instanceof UpstreamError) {
+    const body = readUpstreamBody(err.message);
     if (err.status === 401) {
       text =
         authMode === "apiKey"
@@ -95,19 +204,22 @@ export function toToolError(err: unknown): ToolError {
           ? (problemDetail(err.message) ?? "The Jobo API refused this request for this API key.")
           : `Authorization failed: the token is missing the required '${REQUIRED_SCOPE}' scope.`;
     } else if (err.status === 404) {
-      text = "No job exists with that id. Job ids come from `search` or `search_jobs`; listings are removed once they close.";
+      text = notFoundMessage(body, tool);
     } else if (err.status === 429) {
       text =
         err.retryAfterSeconds != null
           ? `Rate limited — retry in ${err.retryAfterSeconds}s.`
           : "Rate limited by the Jobo API. Wait a moment before retrying.";
+    } else if (err.status === 400) {
+      const problems = body.fieldErrors.length > 0 ? body.fieldErrors.join(" ") : body.detail;
+      text =
+        `The Jobo API rejected the request${problems ? `: ${sentence(problems)}` : "."}` +
+        "\n\nHint: call `list_filters` for the exact accepted values for work model, employment type, " +
+        "experience level and source. Also note salary filters only match jobs whose employer disclosed a salary.";
+    } else if (err.status >= 500) {
+      text = serverErrorMessage(err, body);
     } else {
-      text = err.message || `Jobo API error ${err.status}.`;
-      if (err.status === 400) {
-        text +=
-          "\n\nHint: call `list_filters` for the exact accepted values for work model, employment type, " +
-          "experience level and source. Also note salary filters only match jobs whose employer disclosed a salary.";
-      }
+      text = body.detail ? sentence(body.detail) : `The Jobo API answered HTTP ${err.status}.`;
     }
   } else {
     text = `Could not reach the Jobo API: ${(err as Error).message}`;

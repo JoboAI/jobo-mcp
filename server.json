@@ -7,7 +7,7 @@
     "url": "https://github.com/JoboAI/jobo-mcp",
     "source": "github"
   },
-  "version": "1.4.1",
+  "version": "1.4.2",
   "websiteUrl": "https://jobo.world/mcp",
   "icons": [
     {
@@ -36,7 +36,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jobo-job-search-mcp",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "runtimeHint": "npx",
       "transport": {
         "type": "streamable-http",
@@ -48,6 +48,12 @@
           "description": "Port for the local HTTP server (default 3002).",
           "isRequired": false,
           "format": "number"
+        },
+        {
+          "name": "MCP_RESOURCE_URL",
+          "description": "The base URL clients reach this server at, without /mcp, e.g. http://localhost:3002. It is the resource the server's OAuth metadata names, and a client refuses to sign in when that differs from the URL it connected to. Default https://jobs-mcp.jobo.world, the hosted server.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     },
@@ -55,7 +61,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jobo-job-search-mcp",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

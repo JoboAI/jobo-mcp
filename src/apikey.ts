@@ -18,6 +18,7 @@
  */
 
 import {
+  isJobId,
   requestJson,
   UpstreamError,
   type UpstreamFiltersResponse,
@@ -365,6 +366,9 @@ export async function callPublicApi<T>(method: string, path: string, apiKey: str
   // fetch and get_job_details.
   if (route.startsWith("/api/mcp/jobs/")) {
     const id = route.slice("/api/mcp/jobs/".length);
+    // Only a UUID is a job. Anything else would name another public route
+    // (`/api/jobs/expired`, `/api/jobs/search`), so it goes nowhere.
+    if (!isJobId(id)) throw new UpstreamError(404, "");
     const job = await send<PublicJob>("GET", `/api/jobs/${id}`);
     return toDetails(job, param("include_description") === "true") as T;
   }

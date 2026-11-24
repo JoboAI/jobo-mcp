@@ -103,6 +103,14 @@ describe("formatLocation", () => {
     assert.equal(formatLocation(summary({ location: null, workplace_type: "Remote" })), "Remote");
   });
 
+  it("reads the workplace type without regard to case, as the API does", () => {
+    // The API falls back to the raw key when it has no display name for it.
+    for (const workplace of ["remote", "REMOTE"]) {
+      assert.equal(formatLocation(summary({ location: null, workplace_type: workplace })), "Remote", workplace);
+    }
+    assert.equal(formatLocation(summary({ location: null, workplace_type: "hybrid" })), "Location not stated");
+  });
+
   it("says so plainly when nothing is known", () => {
     assert.equal(formatLocation(summary({ location: null, workplace_type: null })), "Location not stated");
   });

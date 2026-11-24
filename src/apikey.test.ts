@@ -330,6 +330,34 @@ describe("local mode: the MCP surface answered from the public API", () => {
     assert.deepEqual(res.occupations.map((occupation) => occupation.id), ["esco:1", "esco:4"]);
   });
 
+  it("refuses a job id that is not a UUID, and calls nothing", async () => {
+    respond = () => ({ body: job() });
+
+    // Each would otherwise name another public route: /api/jobs/expired, /api/jobs/feed. ("search" is
+    // the search route itself on this surface; `jobPath` stops it before a path is built.)
+    for (const id of ["expired", "feed", "..%2Fcompanies", "0b9a1f7e"]) {
+      await assert.rejects(
+        () => call("GET", `/api/mcp/jobs/${id}`),
+        (err: unknown) => err instanceof UpstreamError && err.status === 404,
+        id,
+      );
+    }
+    assert.deepEqual(seen, []);
+  });
+
+  it("does not run a search again that ran out of time, which would fail the same way", async () => {
+    respond = () => ({
+      status: 503,
+      body: { title: "Search took too long", status: 503, detail: "The search did not finish within its time limit." },
+    });
+
+    await assert.rejects(
+      () => call("POST", "/api/mcp/jobs/search", { query: "x", page_size: 5 }),
+      (err: unknown) => err instanceof UpstreamError && err.status === 503 && err.retryAfterSeconds === undefined,
+    );
+    assert.equal(seen.length, 1, "a search that timed out was sent again");
+  });
+
   it("keeps the API's refusal, with its status, for the error text to explain", async () => {
     respond = () => ({ status: 401, body: { error: "Invalid or expired API key" } });
 
@@ -347,5 +375,18 @@ describe("local mode: the MCP surface answered from the public API", () => {
     assert.equal(seen[0].path, "/api/mcp/companies/suggest?q=stripe");
     assert.equal(seen[0].headers.authorization, "Bearer token-abc");
     assert.equal(seen[0].headers["x-api-key"], undefined);
+  });
+
+  it("remembers an OAuth token the API refused, as a hash, and never an API key", async () => {
+    const { rejectedTokens, tokenHash } = await import("./rejected-tokens.js");
+    rejectedTokens.clear();
+    respond = () => ({ status: 401, body: { error: "invalid_token" } });
+
+    await assert.rejects(() => callApi("GET", "/api/mcp/filters", "token-revoked"));
+    await assert.rejects(() => call("GET", "/api/mcp/filters"));
+
+    assert.equal(rejectedTokens.has("token-revoked"), true);
+    assert.deepEqual(rejectedTokens.storedKeys(), [tokenHash("token-revoked")]);
+    assert.equal(rejectedTokens.has(KEY), false, "local mode has no sign-in to send the client back to");
   });
 });

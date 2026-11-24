@@ -27,8 +27,18 @@ npx jobo-job-search-mcp
 Starts the Streamable HTTP server on `$PORT` (default `3002`); point your client at
 `http://localhost:3002/mcp`. This changes *where* the gateway runs, not its auth model — it's still an
 OAuth resource server gated on Jobo account sign-in, since the upstream API validates every request against
-the Authorization Server regardless of which copy of the gateway forwarded it. Set `MCP_RESOURCE_URL` to
-match whatever host you actually serve it from — see [Configuration](#configuration) below.
+the Authorization Server regardless of which copy of the gateway forwarded it.
+
+Set `MCP_RESOURCE_URL` to the base URL your client connects to, without `/mcp`:
+
+```bash
+MCP_RESOURCE_URL=http://localhost:3002 npx jobo-job-search-mcp
+```
+
+It is the `resource` the server names in its OAuth metadata (`/.well-known/oauth-protected-resource`) and in
+its `401` challenge. It defaults to the hosted `https://jobs-mcp.jobo.world`, and a client that checks the
+metadata against the URL it connected to refuses to sign in when the two differ. See
+[Configuration](#configuration) below.
 
 ## Local mode: stdio and an API key
 
@@ -55,8 +65,9 @@ JOBO_API_KEY=jbe_live_… npx jobo-job-search-mcp --stdio
 - **Same tools, same answers.** The seven tools are answered from the public REST API with the key and
   projected into the shapes the hosted server returns (`src/apikey.ts`). A key therefore meets the same
   limits, billing and logging as in any other integration.
-- **Cost.** `search` and `search_jobs` are billed per job returned, at the API's rate. `get_job_details`,
-  `fetch`, `find_companies`, `find_filter_values` and `list_filters` are free.
+- **Cost.** `search` and `search_jobs` are billed per job returned, at the API's rate: the plan's included
+  jobs first, then the wallet. An empty result costs nothing, and `search` returns at most 10 jobs.
+  `get_job_details`, `fetch`, `find_companies`, `find_filter_values` and `list_filters` are free.
 - **Without a key** the server still starts and lists its tools, which is what a directory's build check
   needs. A tool call answers with the variable to set.
 - **One difference:** `list_filters` does not say how many jobs are indexed, because the public API has no
@@ -132,7 +143,10 @@ here would only let the two validators drift. So this does the minimum a gateway
    scope), starting the OAuth flow. With `MCP_PUBLIC_DISCOVERY` on, discovery requests are the one
    exception — see below.
 2. Cheaply reject an already-expired token (decode `exp`, no signature check) so long-lived clients
-   refresh rather than forwarding a dead token.
+   refresh rather than forwarding a dead token. A token the API itself refused in the last five minutes
+   (revoked, signing key rotated) gets the same `401`: the call that found out returns a tool error, and
+   the next request starts sign-in again. Only a SHA-256 hash of the token is kept, in memory
+   (`src/rejected-tokens.ts`).
 3. Attach the raw current-request token to `req.auth`, so every tool call forwards the token the client
    just sent — never one captured at session-initialize.
 
@@ -184,7 +198,7 @@ with no `mcp-session-id` issued.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `JOBO_API_URL` | `https://connect.jobo.world` | Upstream External API. |
-| `MCP_RESOURCE_URL` | `https://jobs-mcp.jobo.world` | OAuth audience. **Must differ from the analytics server's `mcp.jobo.world`.** |
+| `MCP_RESOURCE_URL` | `https://jobs-mcp.jobo.world` | The base URL clients connect to. It is the `resource` in the protected-resource metadata and the `401` challenge, so it must match that URL. It is not the token audience: tokens carry the audience of the `jobs:read` scope (`https://mcp.jobo.world` in production), and the External API checks that one. |
 | `OAUTH_AUTH_SERVER_URL` | `https://enterprise.jobo.world` | Authorization Server. |
 | `PORT` | `3002` | Analytics server uses 3001. |
 | `MCP_PUBLIC_DISCOVERY` | off | `true` answers the handshake and the list methods without a token. See [Discovery without a token](#discovery-without-a-token). |
